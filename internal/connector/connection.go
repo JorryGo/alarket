@@ -9,6 +9,7 @@ import (
 )
 
 type connection struct {
+	id             int64
 	conn           *websocket.Conn
 	messageHandler func()
 	closeChan      chan struct{}
@@ -62,7 +63,14 @@ func (c *connection) runHandler(handler func([]byte)) {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			log.Warn().Msgf("conn read error: %s", err)
-			continue
+
+			err = c.conn.Close()
+			if err != nil {
+				log.Warn().Err(err)
+			}
+
+			c.closeChan <- struct{}{}
+			break
 		}
 
 		go handler(message)

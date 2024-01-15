@@ -19,7 +19,7 @@ func main() {
 
 	handler := func(message []byte) {
 		log.Info().RawJSON(`data`, message)
-		log.Info().Msg(string(message))
+
 	}
 
 	connInstance := connector.New(`wss://stream.binance.com:443/ws`, handler)
