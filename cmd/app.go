@@ -1,15 +1,17 @@
 package main
 
 import (
+	internalBinance "alarket/internal/binance"
 	"alarket/internal/connector"
 	"context"
 	"fmt"
-	"github.com/adshao/go-binance/v2"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"os"
 	"os/signal"
 	"time"
+
+	"github.com/adshao/go-binance/v2"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 func main() {
@@ -17,12 +19,7 @@ func main() {
 
 	log.Info().Msg(`Scrapper has started`)
 
-	handler := func(message []byte) {
-		log.Info().RawJSON(`data`, message)
-
-	}
-
-	connInstance := connector.New(`wss://stream.binance.com:443/ws`, handler)
+	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.NewRequestHandler().Handle)
 	connInstance.Run()
 
 	binanceClient := binance.NewClient(``, ``)
