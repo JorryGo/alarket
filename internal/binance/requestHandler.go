@@ -3,19 +3,13 @@ package binance
 import (
 	"alarket/internal/binance/events"
 	"encoding/json"
+
 	"github.com/bitly/go-simplejson"
 
 	"github.com/rs/zerolog/log"
 )
 
-type RequestHandler struct {
-}
-
-func NewRequestHandler() *RequestHandler {
-	return &RequestHandler{}
-}
-
-func (r *RequestHandler) Handle(message []byte) {
+func Handle(message []byte) {
 	j, err := simplejson.NewJson(message)
 	if err != nil {
 		log.Warn().Err(err)

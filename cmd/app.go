@@ -19,7 +19,7 @@ func main() {
 
 	log.Info().Msg(`Scrapper has started`)
 
-	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.NewRequestHandler().Handle)
+	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle)
 	connInstance.Run()
 
 	binanceClient := binance.NewClient(``, ``)
