@@ -77,7 +77,7 @@ func (c *Connector) doSubscription(tickers []string) error {
 
 func (c *Connector) ClosePool() {
 	for key := range c.connectionPool {
-		c.connectionPool[key].close()
+		c.connectionPool[key].closeChan <- struct{}{}
 	}
 }
 
@@ -127,6 +127,7 @@ func (c *Connector) handleConnection(conn *connection) {
 				if err != nil {
 					log.Err(err)
 				}
+				conn.close()
 				return
 			case <-ticker.C:
 				err := conn.conn.WriteMessage(websocket.PingMessage, []byte(``))
