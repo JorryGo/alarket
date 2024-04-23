@@ -49,22 +49,22 @@ func (c *Connector) doSubscription(tickers []string) error {
 			continue
 		}
 
-		avaiableNewSubsAmount := c.maxStreamsPerConn - len(conn.getSubs())
-		if avaiableNewSubsAmount > c.maxSubsPerRequest {
-			avaiableNewSubsAmount = c.maxSubsPerRequest
+		availableNewSubsAmount := c.maxStreamsPerConn - len(conn.getSubs())
+		if availableNewSubsAmount > c.maxSubsPerRequest {
+			availableNewSubsAmount = c.maxSubsPerRequest
 		}
 
-		if avaiableNewSubsAmount > len(tickers) {
-			avaiableNewSubsAmount = len(tickers)
+		if availableNewSubsAmount > len(tickers) {
+			availableNewSubsAmount = len(tickers)
 		}
 
-		if err := conn.addSubs(tickers[:avaiableNewSubsAmount]); err != nil {
+		if err := conn.addSubs(tickers[:availableNewSubsAmount]); err != nil {
 			return err
 		}
 
 		time.Sleep(time.Second / 4)
 
-		tickers = tickers[avaiableNewSubsAmount:]
+		tickers = tickers[availableNewSubsAmount:]
 
 		if len(conn.getSubs()) < c.maxStreamsPerConn {
 			i--
