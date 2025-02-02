@@ -2,6 +2,7 @@ package main
 
 import (
 	internalBinance "alarket/internal/binance"
+	"alarket/internal/binance/processors"
 	"alarket/internal/connector"
 	"context"
 	"fmt"
@@ -22,13 +23,15 @@ func main() {
 	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle)
 	connInstance.Run()
 
-	tickersToAdd := getTickers()
+	//tickersToAdd := getTickers()
 
-	err := connInstance.SubscribeStreams(tickersToAdd)
+	//err := connInstance.SubscribeStreams(tickersToAdd)
 
-	if err != nil {
-		log.Warn().Err(err)
-	}
+	//if err != nil {
+	//	log.Warn().Err(err)
+	//}
+
+	processors.GetTickersForMap()
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, os.Kill)
