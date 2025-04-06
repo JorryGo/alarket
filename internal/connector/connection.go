@@ -1,11 +1,13 @@
 package connector
 
 import (
-	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog/log"
+	"alarket/internal/trader"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/rs/zerolog/log"
 )
 
 type connection struct {
@@ -58,7 +60,7 @@ func (c *connection) getSubs() []string {
 	return c.subs
 }
 
-func (c *connection) runHandler(handler func([]byte)) {
+func (c *connection) runHandler(handler func([]byte, *trader.Trader), trader *trader.Trader) {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
@@ -73,6 +75,6 @@ func (c *connection) runHandler(handler func([]byte)) {
 			break
 		}
 
-		go handler(message)
+		go handler(message, trader)
 	}
 }

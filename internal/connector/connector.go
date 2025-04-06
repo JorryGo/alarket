@@ -1,27 +1,31 @@
 package connector
 
 import (
-	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog/log"
+	"alarket/internal/trader"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/rs/zerolog/log"
 )
 
 type Connector struct {
 	url               string
 	connectionPool    []*connection
-	messageHandler    func([]byte)
+	messageHandler    func([]byte, *trader.Trader)
+	trader            *trader.Trader
 	maxStreamsPerConn int
 	maxSubsPerRequest int
 	mux               sync.Mutex
 }
 
-func New(uri string, handler func([]byte)) *Connector {
+func New(uri string, handler func([]byte, *trader.Trader), trader *trader.Trader) *Connector {
 	return &Connector{
 		url:               uri,
 		maxStreamsPerConn: 1022,
 		maxSubsPerRequest: 100,
 		messageHandler:    handler,
+		trader:            trader,
 	}
 }
 
@@ -99,7 +103,7 @@ func (c *Connector) makeNewConnection() {
 		id:        time.Now().UnixNano(),
 	}
 
-	go newConn.runHandler(c.messageHandler)
+	go newConn.runHandler(c.messageHandler, c.trader)
 	go c.handleConnection(newConn)
 
 	c.connectionPool = append(c.connectionPool, newConn)

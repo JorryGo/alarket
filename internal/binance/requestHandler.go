@@ -2,6 +2,7 @@ package binance
 
 import (
 	"alarket/internal/binance/events"
+	"alarket/internal/trader"
 	"encoding/json"
 
 	"github.com/bitly/go-simplejson"
@@ -9,7 +10,8 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func Handle(message []byte) {
+// Handle processes WebSocket messages and routes them to appropriate event handlers
+func Handle(message []byte, trader *trader.Trader) {
 	j, err := simplejson.NewJson(message)
 	if err != nil {
 		log.Warn().Err(err)
@@ -32,7 +34,7 @@ func Handle(message []byte) {
 			log.Warn().Err(err)
 			return
 		}
-		event.Handle()
+		event.Handle(trader)
 		return
 	}
 

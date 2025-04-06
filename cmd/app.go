@@ -4,6 +4,7 @@ import (
 	internalBinance "alarket/internal/binance"
 	"alarket/internal/binance/processors"
 	"alarket/internal/connector"
+	trader2 "alarket/internal/trader"
 	"context"
 	"fmt"
 	"os"
@@ -20,18 +21,28 @@ func main() {
 
 	log.Info().Msg(`Scrapper has started`)
 
-	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle)
+	tree, err := processors.GetTickersForMap()
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error getting tickers")
+	}
+
+	tickersToAddMap := make(map[string]struct{}, len(*tree))
+	getTickersFromTree(tree, &tickersToAddMap)
+	tickersToAdd := make([]string, 0, len(tickersToAddMap))
+	for key := range tickersToAddMap {
+		tickersToAdd = append(tickersToAdd, key)
+	}
+
+	trader := trader2.InitTrader(tree)
+
+	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle, trader)
 	connInstance.Run()
 
-	//tickersToAdd := getTickers()
+	err = connInstance.SubscribeStreams(tickersToAdd)
 
-	//err := connInstance.SubscribeStreams(tickersToAdd)
-
-	//if err != nil {
-	//	log.Warn().Err(err)
-	//}
-
-	processors.GetTickersForMap()
+	if err != nil {
+		log.Warn().Err(err)
+	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, os.Kill)
@@ -47,6 +58,17 @@ func main() {
 	<-done
 	fmt.Println(`exiting`)
 
+}
+
+func getTickersFromTree(tree *map[string]*processors.SymbolTree, tickersMap *map[string]struct{}) {
+	for _, ticker := range *tree {
+		(*tickersMap)[ticker.SymbolName] = struct{}{}
+		if ticker.To == nil {
+			continue
+		}
+
+		getTickersFromTree(ticker.To, tickersMap)
+	}
 }
 
 func getTickers() []string {
