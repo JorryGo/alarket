@@ -68,9 +68,13 @@ func findLoops(symbols []*binance.Symbol, from *SymbolTree, symbolToFind []strin
 			From:       from,
 		}
 
-		symbolsTree[symbol.Symbol] = st
-
 		st.To = findLoops(symbols, st, []string{symbol.QuoteAsset, symbol.BaseAsset}, deep)
+
+		if len(*st.To) == 0 && deep != 3 {
+			continue
+		}
+
+		symbolsTree[symbol.Symbol] = st
 	}
 
 	return &symbolsTree
