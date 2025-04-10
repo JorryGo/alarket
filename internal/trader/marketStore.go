@@ -130,11 +130,11 @@ func (t *Trader) checkLoop(node *processors.SymbolTree, initialAmount float64) {
 
 			aa := 100 - (initialAmount / startedMoney * 100)
 
-			fmt.Println(path, initialAmount, aa)
+			//fmt.Println(path, initialAmount, aa)
 
-			//if (aa > 0.5 || aa < -0.5) && initialAmount > 1.001 {
-			//	fmt.Println(path, initialAmount, aa)
-			//}
+			if (aa > 0.5 || aa < -0.5) && initialAmount > 1.001 {
+				fmt.Println(path, initialAmount, aa)
+			}
 		}
 	}
 
