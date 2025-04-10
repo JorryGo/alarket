@@ -19,7 +19,7 @@ func Handle(message []byte, trader *trader.Trader) {
 	}
 
 	if _, ok := j.CheckGet(`e`); !ok {
-		log.Info().Msgf(`Unhandled message %s`, message)
+		handleBookTicker(message, trader)
 		return
 	}
 
@@ -39,4 +39,15 @@ func Handle(message []byte, trader *trader.Trader) {
 	}
 
 	log.Warn().Msgf(`Unhandled message %s`, message)
+}
+
+func handleBookTicker(message []byte, trader *trader.Trader) {
+	event := new(events.BookTickerEvent)
+	err := json.Unmarshal(message, event)
+	if err != nil {
+		log.Warn().Err(err)
+		return
+	}
+
+	event.Handle(trader)
 }

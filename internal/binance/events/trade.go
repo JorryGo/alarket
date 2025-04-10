@@ -12,6 +12,10 @@ type TradeEvent struct {
 	binance.WsTradeEvent
 }
 
+type BookTickerEvent struct {
+	binance.WsBookTickerEvent
+}
+
 // Handle processes trade events and uses the trader to update pricing data
 func (e *TradeEvent) Handle(trader *trader.Trader) {
 	//log.Info().Msgf(`Received trade event for %s`, e.Symbol)
@@ -25,4 +29,15 @@ func (e *TradeEvent) Handle(trader *trader.Trader) {
 	trader.SetPrice(e.Symbol, price)
 	trader.CheckLoopDiffs(e.Symbol)
 	return
+}
+
+func (e *BookTickerEvent) Handle(trader *trader.Trader) {
+	price, err := strconv.ParseFloat(e.BestBidPrice, 64)
+	if err != nil {
+		log.Error().Err(err).Msgf("Failed to parse price for %s, %v", e.Symbol, e)
+		return
+	}
+
+	trader.SetPrice(e.Symbol, price)
+	go trader.CheckLoopDiffs(e.Symbol)
 }

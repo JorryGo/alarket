@@ -37,7 +37,7 @@ func (c *connection) addSubs(tickers []string) error {
 	}
 
 	for _, ticker := range tickers {
-		subRequest.Params = append(subRequest.Params, strings.ToLower(ticker)+`@trade`)
+		subRequest.Params = append(subRequest.Params, strings.ToLower(ticker)+`@bookTicker`)
 	}
 
 	err := c.conn.WriteJSON(subRequest)

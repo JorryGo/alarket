@@ -110,6 +110,7 @@ func (c *Connector) makeNewConnection() {
 }
 
 func (c *Connector) handleConnection(conn *connection) {
+
 	conn.conn.SetPongHandler(func(pongMessage string) error {
 		err := conn.conn.SetReadDeadline(time.Now().Add(time.Second * 15))
 		if err != nil {

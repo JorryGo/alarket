@@ -15,7 +15,7 @@ type SymbolTree struct {
 
 func GetTickersForMap() (*map[string]*SymbolTree, error) {
 	binanceClient := binance.NewClient(``, ``)
-	tickerList, err := binanceClient.NewExchangeInfoService().Do(context.Background())
+	tickerList, err := binanceClient.NewExchangeInfoService().Symbols("BTCUSDT", "ETHBTC", "ETHUSDT").Do(context.Background())
 
 	if err != nil || tickerList == nil {
 		log.Fatal().Err(err)
