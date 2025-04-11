@@ -44,6 +44,11 @@ func main() {
 		log.Warn().Err(err)
 	}
 
+	ticker := time.NewTicker(time.Second / 100)
+	for range ticker.C {
+		trader.CheckLoopDiffs("BTCUSDT")
+	}
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, os.Kill)
 	done := make(chan bool, 1)

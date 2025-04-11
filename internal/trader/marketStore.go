@@ -3,7 +3,10 @@ package trader
 import (
 	"alarket/internal/binance/processors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,6 +34,21 @@ type Trader struct {
 	priceStorage map[string]*Price
 	tradingTree  map[string]*processors.SymbolTree
 	mu           sync.RWMutex
+	locked       atomic.Bool
+	pricerMu     sync.Mutex
+}
+
+func (t *Trader) tryLock() bool {
+	if !t.locked.CompareAndSwap(false, true) {
+		return false // уже заблокировано
+	}
+	t.pricerMu.Lock()
+	return true
+}
+
+func (t *Trader) tunlock() {
+	t.locked.Store(false)
+	t.pricerMu.Unlock()
 }
 
 func InitTrader(tree *map[string]*processors.SymbolTree) *Trader {
@@ -38,12 +56,18 @@ func InitTrader(tree *map[string]*processors.SymbolTree) *Trader {
 }
 
 func (t *Trader) SetPrice(symbol string, price float64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.mu.RLock()
 	priceStruct, ok := t.priceStorage[symbol]
+	t.mu.RUnlock()
 
 	if !ok {
-		t.priceStorage[symbol] = &Price{Symbol: symbol, Price: price}
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		t.priceStorage[symbol] = &Price{
+			Symbol:      symbol,
+			Price:       price,
+			LastUpdated: time.Now(),
+		}
 		return
 	}
 
@@ -60,7 +84,7 @@ func (t *Trader) Price(symbol string) (float64, bool) {
 	}
 
 	// Check if more than 1 second has passed since the last update
-	if time.Since(price.LastUpdated) > time.Second*10 {
+	if time.Since(price.LastUpdated) > time.Second*2 {
 		return 0, false
 	}
 
@@ -85,9 +109,20 @@ func (t *Trader) checkLoop(node *processors.SymbolTree, initialAmount float64) {
 		return
 	}
 
-	startedMoney := initialAmount
+	if !t.tryLock() {
+		return
+	}
+
+	defer t.tunlock()
+	fmt.Print("\033[2J\033[H")
+
+	start := time.Now()
+	out := make([]string, 0, 7)
 
 	for _, secondNode := range *node.To {
+		startedMoney := initialAmount
+		currentAmount := initialAmount
+
 		for _, lastNode := range *secondNode.To {
 			path := node.SymbolName + " -> " + secondNode.SymbolName + " -> " + lastNode.SymbolName
 
@@ -108,34 +143,40 @@ func (t *Trader) checkLoop(node *processors.SymbolTree, initialAmount float64) {
 
 			if node.Symbol.BaseAsset == "USDT" {
 				ownerOfCoin = node.Symbol.QuoteAsset
-				initialAmount *= firstPrice
+				currentAmount *= firstPrice
 			} else {
 				ownerOfCoin = node.Symbol.BaseAsset
-				initialAmount /= firstPrice
+				currentAmount /= firstPrice
 			}
 
 			if secondNode.Symbol.BaseAsset == ownerOfCoin {
 				ownerOfCoin = secondNode.Symbol.QuoteAsset
-				initialAmount *= secondPrice
+				currentAmount *= secondPrice
 			} else {
 				ownerOfCoin = secondNode.Symbol.BaseAsset
-				initialAmount /= secondPrice
+				currentAmount /= secondPrice
 			}
 
 			if lastNode.Symbol.BaseAsset == ownerOfCoin {
-				initialAmount *= lastPrice
+				currentAmount *= lastPrice
 			} else {
-				initialAmount /= lastPrice
+				currentAmount /= lastPrice
 			}
 
-			aa := 100 - (initialAmount / startedMoney * 100)
+			aa := ((currentAmount / startedMoney) - 1) * 100
 
-			//fmt.Println(path, initialAmount, aa)
+			//fmt.Println(path, currentAmount, aa)
 
-			if (aa > 0.5 || aa < -0.5) && initialAmount > 1.001 {
-				fmt.Println(path, initialAmount, aa)
+			if aa > 2 {
+				out = append(out, fmt.Sprintf("%s %f %f", path, currentAmount, aa))
+				//fmt.Println(path, currentAmount, aa)
 			}
 		}
 	}
+
+	sort.Strings(out)
+	fmt.Println(strings.Join(out, "\n"))
+	duration := time.Since(start) // вычисляем разницу
+	fmt.Printf("%s - Время выполнения: %s\n", time.Now(), duration)
 
 }

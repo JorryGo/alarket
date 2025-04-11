@@ -38,6 +38,17 @@ func (e *BookTickerEvent) Handle(trader *trader.Trader) {
 		return
 	}
 
+	oldPrice, ok := trader.Price(e.Symbol)
+
+	if ok && oldPrice == price {
+		return
+	}
+
 	trader.SetPrice(e.Symbol, price)
-	go trader.CheckLoopDiffs(e.Symbol)
+
+	if e.Symbol != "BTCUSDT" {
+		return
+	}
+
+	//go trader.CheckLoopDiffs(e.Symbol)
 }
