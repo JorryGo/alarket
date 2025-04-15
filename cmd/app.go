@@ -21,6 +21,9 @@ func main() {
 
 	log.Info().Msg(`Scrapper has started`)
 
+	//executor := trader2.InitExecutor()
+	//executor.BuyMarket("BTCUSDT", 1.0)
+
 	tree, err := processors.GetTickersForMap()
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error getting tickers")
@@ -44,9 +47,15 @@ func main() {
 		log.Warn().Err(err)
 	}
 
-	ticker := time.NewTicker(time.Second / 100)
+	ticker := time.NewTicker(time.Second / 10)
 	for range ticker.C {
-		trader.CheckLoopDiffs("BTCUSDT")
+		for symbol, val := range *tree {
+			if val.Symbol.BaseAsset != "USDT" && val.Symbol.QuoteAsset != "USDT" {
+				continue
+			}
+
+			trader.CheckLoopDiffs(symbol)
+		}
 	}
 
 	sigs := make(chan os.Signal, 1)

@@ -12,22 +12,30 @@ import (
 
 type Price struct {
 	Symbol      string
-	Price       float64
+	BidPrice    float64
+	AskPrice    float64
 	LastUpdated time.Time
 	mu          sync.RWMutex
 }
 
-func (p *Price) setPrice(price float64) {
+func (p *Price) setPrice(bidPrice float64, askPrice float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.Price = price
+	p.BidPrice = bidPrice
+	p.AskPrice = askPrice
 	p.LastUpdated = time.Now()
 }
 
-func (p *Price) getPrice() float64 {
+func (p *Price) getBidPrice() float64 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return p.Price
+	return p.BidPrice
+}
+
+func (p *Price) getAskPrice() float64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.AskPrice
 }
 
 type Trader struct {
@@ -55,7 +63,7 @@ func InitTrader(tree *map[string]*processors.SymbolTree) *Trader {
 	return &Trader{priceStorage: make(map[string]*Price), tradingTree: *tree}
 }
 
-func (t *Trader) SetPrice(symbol string, price float64) {
+func (t *Trader) SetPrice(symbol string, bidPrice float64, askPrice float64) {
 	t.mu.RLock()
 	priceStruct, ok := t.priceStorage[symbol]
 	t.mu.RUnlock()
@@ -65,16 +73,17 @@ func (t *Trader) SetPrice(symbol string, price float64) {
 		defer t.mu.Unlock()
 		t.priceStorage[symbol] = &Price{
 			Symbol:      symbol,
-			Price:       price,
+			BidPrice:    bidPrice,
+			AskPrice:    askPrice,
 			LastUpdated: time.Now(),
 		}
 		return
 	}
 
-	priceStruct.setPrice(price)
+	priceStruct.setPrice(bidPrice, askPrice)
 }
 
-func (t *Trader) Price(symbol string) (float64, bool) {
+func (t *Trader) BidPrice(symbol string) (float64, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	price, ok := t.priceStorage[symbol]
@@ -84,11 +93,28 @@ func (t *Trader) Price(symbol string) (float64, bool) {
 	}
 
 	// Check if more than 1 second has passed since the last update
-	if time.Since(price.LastUpdated) > time.Second*2 {
+	if time.Since(price.LastUpdated) > time.Hour {
 		return 0, false
 	}
 
-	return price.getPrice(), true
+	return price.getBidPrice(), true
+}
+
+func (t *Trader) AskPrice(symbol string) (float64, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	price, ok := t.priceStorage[symbol]
+
+	if !ok {
+		return 0, false
+	}
+
+	// Check if more than 1 second has passed since the last update
+	if time.Since(price.LastUpdated) > time.Hour {
+		return 0, false
+	}
+
+	return price.getAskPrice(), true
 }
 
 func (t *Trader) CheckLoopDiffs(symbol string) {
@@ -114,7 +140,6 @@ func (t *Trader) checkLoop(node *processors.SymbolTree, initialAmount float64) {
 	}
 
 	defer t.tunlock()
-	fmt.Print("\033[2J\033[H")
 
 	start := time.Now()
 	out := make([]string, 0, 7)
@@ -126,57 +151,68 @@ func (t *Trader) checkLoop(node *processors.SymbolTree, initialAmount float64) {
 		for _, lastNode := range *secondNode.To {
 			path := node.SymbolName + " -> " + secondNode.SymbolName + " -> " + lastNode.SymbolName
 
-			firstPrice, ok := t.Price(node.SymbolName)
-			if !ok {
-				continue
-			}
-			secondPrice, ok := t.Price(secondNode.SymbolName)
-			if !ok {
-				continue
-			}
-			lastPrice, ok := t.Price(lastNode.SymbolName)
+			// Первая сделка: BTC/USDT - покупаем BTC за USDT, используем Ask цену
+			firstPrice, ok := t.AskPrice(node.SymbolName)
 			if !ok {
 				continue
 			}
 
+			// Определим, что у нас сейчас есть (после первой сделки)
 			var ownerOfCoin string
 
-			if node.Symbol.BaseAsset == "USDT" {
-				ownerOfCoin = node.Symbol.QuoteAsset
-				currentAmount *= firstPrice
-			} else {
-				ownerOfCoin = node.Symbol.BaseAsset
-				currentAmount /= firstPrice
-			}
+			// После покупки BTCUSDT у нас на руках BTC
+			ownerOfCoin = node.Symbol.BaseAsset
+			currentAmount /= firstPrice
 
+			// Вторая сделка: определяем направление и какую цену использовать
+			var secondPrice float64
 			if secondNode.Symbol.BaseAsset == ownerOfCoin {
+				// Мы продаем наш ownerOfCoin (например, BTC), используем Bid цену
+				secondPrice, ok = t.BidPrice(secondNode.SymbolName)
 				ownerOfCoin = secondNode.Symbol.QuoteAsset
 				currentAmount *= secondPrice
 			} else {
+				// Мы покупаем базовый актив за наш ownerOfCoin, используем Ask цену
+				secondPrice, ok = t.AskPrice(secondNode.SymbolName)
 				ownerOfCoin = secondNode.Symbol.BaseAsset
 				currentAmount /= secondPrice
 			}
+			if !ok {
+				continue
+			}
 
+			// Третья сделка: последний шаг треугольника
+			var lastPrice float64
 			if lastNode.Symbol.BaseAsset == ownerOfCoin {
+				// Мы продаем наш ownerOfCoin, используем Bid цену
+				lastPrice, ok = t.BidPrice(lastNode.SymbolName)
 				currentAmount *= lastPrice
 			} else {
+				// Мы покупаем базовый актив за наш ownerOfCoin, используем Ask цену
+				lastPrice, ok = t.AskPrice(lastNode.SymbolName)
 				currentAmount /= lastPrice
+			}
+			if !ok {
+				continue
 			}
 
 			aa := ((currentAmount / startedMoney) - 1) * 100
 
 			//fmt.Println(path, currentAmount, aa)
 
-			if aa > 2 {
+			if aa > 0.3 {
 				out = append(out, fmt.Sprintf("%s %f %f", path, currentAmount, aa))
 				//fmt.Println(path, currentAmount, aa)
 			}
 		}
 	}
 
+	if len(out) == 0 {
+		return
+	}
+
 	sort.Strings(out)
 	fmt.Println(strings.Join(out, "\n"))
 	duration := time.Since(start) // вычисляем разницу
 	fmt.Printf("%s - Время выполнения: %s\n", time.Now(), duration)
-
 }

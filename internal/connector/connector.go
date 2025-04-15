@@ -112,7 +112,7 @@ func (c *Connector) makeNewConnection() {
 func (c *Connector) handleConnection(conn *connection) {
 
 	conn.conn.SetPongHandler(func(pongMessage string) error {
-		err := conn.conn.SetReadDeadline(time.Now().Add(time.Second * 15))
+		err := conn.conn.SetReadDeadline(time.Now().Add(time.Second * 60))
 		if err != nil {
 			log.Warn().Msgf(`Pong err: %s`, err)
 		}
@@ -139,7 +139,7 @@ func (c *Connector) handleConnection(conn *connection) {
 				if err != nil {
 					log.Warn().Msgf(`Error with sending a ping message: %s`, err)
 				}
-				log.Info().Msg(`Ping sent`)
+				//log.Info().Msg(`Ping sent`)
 			}
 		}
 	}(conn)

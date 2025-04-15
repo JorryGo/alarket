@@ -2,6 +2,7 @@ package events
 
 import (
 	"alarket/internal/trader"
+	"fmt"
 	"strconv"
 
 	"github.com/adshao/go-binance/v2"
@@ -26,29 +27,22 @@ func (e *TradeEvent) Handle(trader *trader.Trader) {
 		return
 	}
 
-	trader.SetPrice(e.Symbol, price)
-	trader.CheckLoopDiffs(e.Symbol)
+	fmt.Println(price)
+	//trader.SetPrice(e.Symbol, price)
+	//trader.CheckLoopDiffs(e.Symbol)
 	return
 }
 
 func (e *BookTickerEvent) Handle(trader *trader.Trader) {
-	price, err := strconv.ParseFloat(e.BestBidPrice, 64)
+	bidPrice, err := strconv.ParseFloat(e.BestBidPrice, 64)
 	if err != nil {
-		log.Error().Err(err).Msgf("Failed to parse price for %s, %v", e.Symbol, e)
 		return
 	}
 
-	oldPrice, ok := trader.Price(e.Symbol)
-
-	if ok && oldPrice == price {
+	askPrice, err := strconv.ParseFloat(e.BestAskPrice, 64)
+	if err != nil {
 		return
 	}
 
-	trader.SetPrice(e.Symbol, price)
-
-	if e.Symbol != "BTCUSDT" {
-		return
-	}
-
-	//go trader.CheckLoopDiffs(e.Symbol)
+	trader.SetPrice(e.Symbol, bidPrice, askPrice)
 }
