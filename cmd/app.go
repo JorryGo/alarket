@@ -21,8 +21,14 @@ func main() {
 
 	log.Info().Msg(`Scrapper has started`)
 
-	//executor := trader2.InitExecutor()
-	//executor.BuyMarket("BTCUSDT", 1.0)
+	executor := trader2.InitExecutor()
+	fmt.Println(executor)
+
+	tt := time.NewTicker(time.Minute * 10)
+
+	for range tt.C {
+		fmt.Println(`tick`)
+	}
 
 	tree, err := processors.GetTickersForMap()
 	if err != nil {
