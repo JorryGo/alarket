@@ -26,6 +26,14 @@ func main() {
 
 	tt := time.NewTicker(time.Minute * 10)
 
+	//res, err := executor.BuyMarket("BTCUSDT", 1)
+	//
+	//if err != nil {
+	//	log.Fatal().Err(err)
+	//}
+	//
+	//fmt.Println(res)
+
 	for range tt.C {
 		fmt.Println(`tick`)
 	}

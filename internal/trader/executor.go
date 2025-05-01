@@ -8,10 +8,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/quickfix/config"
+	"github.com/quickfixgo/tag"
 )
 
 //const apiKey = "ntCyqh0qiuEGtg9jH4EOtIoeSv8ETOjiHdeHjs0zNgwpckL5flXpigOIT5teYmzv"
@@ -47,8 +51,9 @@ func InitExecutor() *Executor {
 
 	// Initialize binanceExecutor
 	client := &binanceExecutor{
-		priv:     privateKey,
-		settings: settings,
+		priv:          privateKey,
+		settings:      settings,
+		pendingOrders: make(map[string]chan ExecutionReport),
 	}
 
 	// Create initiator
@@ -75,8 +80,122 @@ func InitExecutor() *Executor {
 	}
 }
 
+// MarketOrderParams holds parameters for a market order
+type MarketOrderParams struct {
+	Symbol   string
+	Quantity float64
+	Side     string // "1" for Buy, "2" for Sell
+}
+
 func (e *Executor) BuyMarket(symbol string, quantity float64) (float64, error) {
-	return 1.4, nil
+	params := MarketOrderParams{
+		Symbol:   symbol,
+		Quantity: quantity,
+		Side:     "1", // Buy
+	}
+	return e.sendMarketOrder(params, "buy")
+}
+
+// SellMarket sells the specified symbol at market price
+func (e *Executor) SellMarket(symbol string, quantity float64) (float64, error) {
+	params := MarketOrderParams{
+		Symbol:   symbol,
+		Quantity: quantity,
+		Side:     "2", // Sell
+	}
+	return e.sendMarketOrder(params, "sell")
+}
+
+// sendMarketOrder creates and sends a market order with the given parameters
+func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (float64, error) {
+	if e.initiator == nil {
+		return 0, fmt.Errorf("FIX initiator not initialized")
+	}
+
+	// Create a new message
+	msg := quickfix.NewMessage()
+
+	// Set message type to NewOrderSingle (D)
+	msg.Header.SetString(tag.MsgType, "D")
+
+	// Generate a unique client order ID
+	clOrdID := fmt.Sprintf("order-%d", time.Now().UnixNano())
+
+	// Set required fields for the order
+	msg.Body.SetString(tag.ClOrdID, clOrdID)                               // ClOrdID - unique client order ID
+	msg.Body.SetString(tag.Symbol, params.Symbol)                          // Symbol
+	msg.Body.SetString(tag.Side, params.Side)                              // Side - 1 for Buy, 2 for Sell
+	msg.Body.SetString(tag.OrdType, "1")                                   // OrdType - 1 for Market
+	msg.Body.SetString(tag.OrderQty, fmt.Sprintf("%.8f", params.Quantity)) // OrderQty as string
+
+	// Create a channel to receive the execution report
+	reportChan := make(chan ExecutionReport, 5) // Buffer for multiple reports
+
+	// Register the order in the pending orders map
+	e.client.pendingOrdersLock.Lock()
+	e.client.pendingOrders[clOrdID] = reportChan
+	e.client.pendingOrdersLock.Unlock()
+
+	// Create a session ID based on the settings.ini file
+	sessionID := quickfix.SessionID{
+		BeginString:  "FIX.4.4",
+		SenderCompID: "MYBOT1",
+		TargetCompID: "SPOT",
+	}
+
+	// Send the order
+	err := quickfix.SendToTarget(msg, sessionID)
+	if err != nil {
+		// Clean up if sending fails
+		e.client.pendingOrdersLock.Lock()
+		delete(e.client.pendingOrders, clOrdID)
+		e.client.pendingOrdersLock.Unlock()
+		close(reportChan)
+		return 0, fmt.Errorf("failed to send market %s order: %w", orderType, err)
+	}
+
+	// Wait for the execution report with a timeout
+	var executionPrice float64
+	var lastError error
+	timeout := time.After(30 * time.Second)
+
+	for {
+		select {
+		case report, ok := <-reportChan:
+			if !ok {
+				// Channel closed, no more reports expected
+				if lastError != nil {
+					return 0, lastError
+				}
+				return executionPrice, nil
+			}
+
+			// Check if there was an error processing the report
+			if report.Error != nil {
+				lastError = report.Error
+				continue
+			}
+
+			// Check if the order was filled
+			if report.OrdStatus == "2" { // FILLED
+				executionPrice = report.LastPx
+				return executionPrice, nil
+			}
+
+			// Check if the order was rejected or canceled
+			if report.OrdStatus == "8" || report.OrdStatus == "4" { // REJECTED or CANCELED
+				return 0, fmt.Errorf("order was %s", report.OrdStatus)
+			}
+
+		case <-timeout:
+			// Clean up on timeout
+			e.client.pendingOrdersLock.Lock()
+			delete(e.client.pendingOrders, clOrdID)
+			e.client.pendingOrdersLock.Unlock()
+			close(reportChan)
+			return 0, fmt.Errorf("timeout waiting for execution report")
+		}
+	}
 }
 
 // Close gracefully shuts down the FIX connection
@@ -98,9 +217,22 @@ const soh = "\x01"
 //     "A<SOH>SenderCompID<SOH>TargetCompID<SOH>MsgSeqNum<SOH>SendingTime"
 //   * ResetSeqNumFlag(141)=Y on every Logon (Binance wants fresh sequences)
 
+// ExecutionReport holds information about an execution report
+type ExecutionReport struct {
+	ClOrdID   string
+	LastPx    float64
+	ExecType  string
+	OrdStatus string
+	Error     error
+}
+
 type binanceExecutor struct {
 	priv     ed25519.PrivateKey
 	settings *quickfix.Settings // full parsed config, so we can read per‑session params
+
+	// Map to store pending orders and channels to receive execution reports
+	pendingOrders     map[string]chan ExecutionReport
+	pendingOrdersLock sync.Mutex
 }
 
 // --- QuickFIX/Go Application callbacks --------------------------------------------------
@@ -123,6 +255,64 @@ func (e *binanceExecutor) ToApp(_ *quickfix.Message, _ quickfix.SessionID) error
 func (e *binanceExecutor) FromApp(m *quickfix.Message, _ quickfix.SessionID) quickfix.MessageRejectError {
 	msgType, _ := m.MsgType()
 	log.Printf("[FIX] inbound %s: %s", msgType, m.String())
+
+	// Check if this is an execution report
+	if msgType == "8" { // ExecutionReport
+		var report ExecutionReport
+
+		// Extract ClOrdID
+		if clOrdID, err := m.Body.GetString(11); err == nil { // 11 is the tag for ClOrdID
+			report.ClOrdID = clOrdID
+		} else {
+			log.Printf("[FIX] Error extracting ClOrdID: %v", err)
+			return nil
+		}
+
+		// Extract ExecType
+		if execType, err := m.Body.GetString(150); err == nil { // 150 is the tag for ExecType
+			report.ExecType = execType
+		} else {
+			log.Printf("[FIX] Error extracting ExecType: %v", err)
+			return nil
+		}
+
+		// Extract OrdStatus
+		if ordStatus, err := m.Body.GetString(39); err == nil { // 39 is the tag for OrdStatus
+			report.OrdStatus = ordStatus
+		} else {
+			log.Printf("[FIX] Error extracting OrdStatus: %v", err)
+			return nil
+		}
+
+		// Extract LastPx if this is a trade execution
+		if report.ExecType == "F" { // TRADE
+			// Get LastPx as a string and convert to float
+			if lastPxStr, err := m.Body.GetString(31); err == nil { // 31 is the tag for LastPx
+				if lastPx, err := strconv.ParseFloat(lastPxStr, 64); err == nil {
+					report.LastPx = lastPx
+				} else {
+					log.Printf("[FIX] Error parsing LastPx: %v", err)
+					report.Error = fmt.Errorf("error parsing LastPx: %w", err)
+				}
+			} else {
+				log.Printf("[FIX] Error extracting LastPx: %v", err)
+				report.Error = fmt.Errorf("error extracting LastPx: %w", err)
+			}
+		}
+
+		// Send the report to the waiting goroutine if there is one
+		e.pendingOrdersLock.Lock()
+		if ch, ok := e.pendingOrders[report.ClOrdID]; ok {
+			ch <- report
+			// If the order is terminal (filled, rejected, canceled), remove it from the map
+			if report.OrdStatus == "2" || report.OrdStatus == "4" || report.OrdStatus == "8" {
+				close(ch)
+				delete(e.pendingOrders, report.ClOrdID)
+			}
+		}
+		e.pendingOrdersLock.Unlock()
+	}
+
 	return nil
 }
 
