@@ -4,11 +4,13 @@ import (
 	"context"
 	"github.com/adshao/go-binance/v2"
 	"github.com/rs/zerolog/log"
+	"strconv"
 )
 
 type SymbolTree struct {
 	SymbolName string
 	Symbol     *binance.Symbol
+	LotMinQty  float64
 	From       *SymbolTree
 	To         *map[string]*SymbolTree
 }
@@ -62,9 +64,12 @@ func findLoops(symbols []*binance.Symbol, from *SymbolTree, symbolToFind []strin
 			continue
 		}
 
+		minLotQty, _ := strconv.ParseFloat(symbol.LotSizeFilter().MinQuantity, 64)
+
 		st := &SymbolTree{
 			SymbolName: symbol.Symbol,
 			Symbol:     symbol,
+			LotMinQty:  minLotQty,
 			From:       from,
 		}
 

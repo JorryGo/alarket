@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/adshao/go-binance/v2"
@@ -21,21 +22,38 @@ func main() {
 
 	log.Info().Msg(`Scrapper has started`)
 
-	executor := trader2.InitExecutor()
-	fmt.Println(executor)
+	var (
+		apiKey    = "***REMOVED***"
+		secretKey = "***REMOVED***"
+	)
+	binance.UseTestnet = true
+	client := binance.NewClient(apiKey, secretKey)
 
-	tt := time.NewTicker(time.Minute * 10)
-
-	//res, err := executor.BuyMarket("BTCUSDT", 1)
-	//
+	//order, err := client.NewCreateOrderService().Symbol("ETHUSDT").
+	//	Side(binance.SideTypeSell).Type(binance.OrderTypeMarket).
+	//	Quantity("1").Do(context.Background())
 	//if err != nil {
-	//	log.Fatal().Err(err)
+	//	fmt.Println(err)
+	//	return
 	//}
-	//
-	//fmt.Println(res)
+	//fmt.Println(order)
 
-	for range tt.C {
-		fmt.Println(`tick`)
+	do, err := client.NewGetAccountService().Do(context.Background())
+	if err != nil {
+		return
+	}
+
+	fmt.Println(do)
+
+	executor := trader2.InitExecutor()
+
+	for {
+		if executor.IsConnected() {
+			fmt.Println(`executor connected`)
+			break
+		}
+
+		time.Sleep(time.Millisecond * 10)
 	}
 
 	tree, err := processors.GetTickersForMap()
@@ -50,9 +68,10 @@ func main() {
 		tickersToAdd = append(tickersToAdd, key)
 	}
 
-	trader := trader2.InitTrader(tree)
+	trader := trader2.InitTrader(tree, executor)
 
-	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle, trader)
+	//connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle, trader)
+	connInstance := connector.New(`wss://stream.testnet.binance.vision/ws`, internalBinance.Handle, trader)
 	connInstance.Run()
 
 	err = connInstance.SubscribeStreams(tickersToAdd)
@@ -73,13 +92,14 @@ func main() {
 	}
 
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, os.Kill)
+	signal.Notify(sigs, os.Interrupt, os.Kill, syscall.SIGTERM)
 	done := make(chan bool, 1)
 
 	go func() {
 		sig := <-sigs
-		fmt.Println(sig)
+		fmt.Println("EXIT", sig)
 		connInstance.ClosePool()
+		executor.Close()
 		done <- true
 	}()
 

@@ -51,9 +51,11 @@ func InitExecutor() *Executor {
 
 	// Initialize binanceExecutor
 	client := &binanceExecutor{
-		priv:          privateKey,
-		settings:      settings,
-		pendingOrders: make(map[string]chan ExecutionReport),
+		priv:            privateKey,
+		settings:        settings,
+		pendingOrders:   make(map[string]chan ExecutionReport),
+		isConnected:     false,
+		isAuthenticated: false,
 	}
 
 	// Create initiator
@@ -87,7 +89,7 @@ type MarketOrderParams struct {
 	Side     string // "1" for Buy, "2" for Sell
 }
 
-func (e *Executor) BuyMarket(symbol string, quantity float64) (float64, error) {
+func (e *Executor) BuyMarket(symbol string, quantity float64) (ExecutionReport, error) {
 	params := MarketOrderParams{
 		Symbol:   symbol,
 		Quantity: quantity,
@@ -97,7 +99,7 @@ func (e *Executor) BuyMarket(symbol string, quantity float64) (float64, error) {
 }
 
 // SellMarket sells the specified symbol at market price
-func (e *Executor) SellMarket(symbol string, quantity float64) (float64, error) {
+func (e *Executor) SellMarket(symbol string, quantity float64) (ExecutionReport, error) {
 	params := MarketOrderParams{
 		Symbol:   symbol,
 		Quantity: quantity,
@@ -107,9 +109,17 @@ func (e *Executor) SellMarket(symbol string, quantity float64) (float64, error) 
 }
 
 // sendMarketOrder creates and sends a market order with the given parameters
-func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (float64, error) {
+func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (ExecutionReport, error) {
+	// Create an empty report
+	emptyReport := ExecutionReport{}
+
 	if e.initiator == nil {
-		return 0, fmt.Errorf("FIX initiator not initialized")
+		return emptyReport, fmt.Errorf("FIX initiator not initialized")
+	}
+
+	// Check if the connection is active and authenticated
+	if !e.IsConnected() {
+		return emptyReport, fmt.Errorf("FIX connection is not active or not authenticated")
 	}
 
 	// Create a new message
@@ -151,11 +161,16 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 		delete(e.client.pendingOrders, clOrdID)
 		e.client.pendingOrdersLock.Unlock()
 		close(reportChan)
-		return 0, fmt.Errorf("failed to send market %s order: %w", orderType, err)
+		return emptyReport, fmt.Errorf("failed to send market %s order: %w", orderType, err)
 	}
 
+	// Pre-populate some fields in the report that we know from the order
+	emptyReport.ClOrdID = clOrdID
+	emptyReport.Symbol = params.Symbol
+	emptyReport.Side = params.Side
+	emptyReport.OrderQty = params.Quantity
+
 	// Wait for the execution report with a timeout
-	var executionPrice float64
 	var lastError error
 	timeout := time.After(30 * time.Second)
 
@@ -165,9 +180,10 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 			if !ok {
 				// Channel closed, no more reports expected
 				if lastError != nil {
-					return 0, lastError
+					return emptyReport, lastError
 				}
-				return executionPrice, nil
+				// This should not happen normally, but return what we have
+				return emptyReport, nil
 			}
 
 			// Check if there was an error processing the report
@@ -178,13 +194,12 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 
 			// Check if the order was filled
 			if report.OrdStatus == "2" { // FILLED
-				executionPrice = report.LastPx
-				return executionPrice, nil
+				return report, nil
 			}
 
 			// Check if the order was rejected or canceled
 			if report.OrdStatus == "8" || report.OrdStatus == "4" { // REJECTED or CANCELED
-				return 0, fmt.Errorf("order was %s", report.OrdStatus)
+				return report, fmt.Errorf("order was %s", report.OrdStatus)
 			}
 
 		case <-timeout:
@@ -193,9 +208,17 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 			delete(e.client.pendingOrders, clOrdID)
 			e.client.pendingOrdersLock.Unlock()
 			close(reportChan)
-			return 0, fmt.Errorf("timeout waiting for execution report")
+			return emptyReport, fmt.Errorf("timeout waiting for execution report")
 		}
 	}
+}
+
+// IsConnected returns true if the FIX connection is active and authenticated
+func (e *Executor) IsConnected() bool {
+	if e.client == nil {
+		return false
+	}
+	return e.client.isConnectedAndAuthenticated()
 }
 
 // Close gracefully shuts down the FIX connection
@@ -203,6 +226,13 @@ func (e *Executor) Close() {
 	if e.initiator != nil {
 		e.initiator.Stop()
 	}
+}
+
+// isConnectedAndAuthenticated returns true if the connection is active and authenticated
+func (e *binanceExecutor) isConnectedAndAuthenticated() bool {
+	e.statusLock.RLock()
+	defer e.statusLock.RUnlock()
+	return e.isConnected && e.isAuthenticated
 }
 
 // The ASCII <SOH> that delimits FIX fields.
@@ -219,11 +249,18 @@ const soh = "\x01"
 
 // ExecutionReport holds information about an execution report
 type ExecutionReport struct {
-	ClOrdID   string
-	LastPx    float64
-	ExecType  string
-	OrdStatus string
-	Error     error
+	ClOrdID     string  // Client order ID
+	OrderID     string  // Exchange order ID
+	Symbol      string  // Trading symbol
+	Side        string  // "1" for Buy, "2" for Sell
+	OrderQty    float64 // Requested quantity
+	LastQty     float64 // Executed quantity in the last fill
+	CumQty      float64 // Cumulative executed quantity
+	LastPx      float64 // Last execution price
+	CumQuoteQty float64 // Cumulative executed quantity in quote currency
+	ExecType    string  // Execution type
+	OrdStatus   string  // Order status
+	Error       error   // Any error that occurred
 }
 
 type binanceExecutor struct {
@@ -233,18 +270,34 @@ type binanceExecutor struct {
 	// Map to store pending orders and channels to receive execution reports
 	pendingOrders     map[string]chan ExecutionReport
 	pendingOrdersLock sync.Mutex
+
+	// Connection status
+	isConnected     bool
+	isAuthenticated bool
+	statusLock      sync.RWMutex
 }
 
 // --- QuickFIX/Go Application callbacks --------------------------------------------------
 
 func (e *binanceExecutor) OnCreate(sessionID quickfix.SessionID) {
 	log.Printf("[FIX] Create %v", sessionID)
+	e.statusLock.Lock()
+	e.isConnected = true
+	e.statusLock.Unlock()
 }
 func (e *binanceExecutor) OnLogon(sessionID quickfix.SessionID) {
 	log.Printf("[FIX] Logon %v", sessionID)
+	e.statusLock.Lock()
+	e.isConnected = true
+	e.isAuthenticated = true
+	e.statusLock.Unlock()
 }
 func (e *binanceExecutor) OnLogout(sessionID quickfix.SessionID) {
 	log.Printf("[FIX] Logout %v", sessionID)
+	e.statusLock.Lock()
+	e.isConnected = false
+	e.isAuthenticated = false
+	e.statusLock.Unlock()
 }
 func (e *binanceExecutor) FromAdmin(msg *quickfix.Message, _ quickfix.SessionID) quickfix.MessageRejectError {
 	msgType, _ := msg.MsgType()
@@ -268,6 +321,30 @@ func (e *binanceExecutor) FromApp(m *quickfix.Message, _ quickfix.SessionID) qui
 			return nil
 		}
 
+		// Extract OrderID
+		if orderID, err := m.Body.GetString(37); err == nil { // 37 is the tag for OrderID
+			report.OrderID = orderID
+		} else {
+			log.Printf("[FIX] Warning: Error extracting OrderID: %v", err)
+			// Not returning, as this field might be missing in some reports
+		}
+
+		// Extract Symbol
+		if symbol, err := m.Body.GetString(55); err == nil { // 55 is the tag for Symbol
+			report.Symbol = symbol
+		} else {
+			log.Printf("[FIX] Warning: Error extracting Symbol: %v", err)
+			// Not returning, as this field might be missing in some reports
+		}
+
+		// Extract Side
+		if side, err := m.Body.GetString(54); err == nil { // 54 is the tag for Side
+			report.Side = side
+		} else {
+			log.Printf("[FIX] Warning: Error extracting Side: %v", err)
+			// Not returning, as this field might be missing in some reports
+		}
+
 		// Extract ExecType
 		if execType, err := m.Body.GetString(150); err == nil { // 150 is the tag for ExecType
 			report.ExecType = execType
@@ -284,28 +361,68 @@ func (e *binanceExecutor) FromApp(m *quickfix.Message, _ quickfix.SessionID) qui
 			return nil
 		}
 
-		// Extract LastPx if this is a trade execution
-		if report.ExecType == "F" { // TRADE
-			// Get LastPx as a string and convert to float
-			if lastPxStr, err := m.Body.GetString(31); err == nil { // 31 is the tag for LastPx
-				if lastPx, err := strconv.ParseFloat(lastPxStr, 64); err == nil {
-					report.LastPx = lastPx
-				} else {
-					log.Printf("[FIX] Error parsing LastPx: %v", err)
-					report.Error = fmt.Errorf("error parsing LastPx: %w", err)
-				}
+		// Extract OrderQty
+		if orderQtyStr, err := m.Body.GetString(38); err == nil { // 38 is the tag for OrderQty
+			if orderQty, err := strconv.ParseFloat(orderQtyStr, 64); err == nil {
+				report.OrderQty = orderQty
 			} else {
-				log.Printf("[FIX] Error extracting LastPx: %v", err)
-				report.Error = fmt.Errorf("error extracting LastPx: %w", err)
+				log.Printf("[FIX] Warning: Error parsing OrderQty: %v", err)
 			}
+		} else {
+			log.Printf("[FIX] Warning: Error extracting OrderQty: %v", err)
+		}
+
+		// Extract LastQty
+		if lastQtyStr, err := m.Body.GetString(32); err == nil { // 32 is the tag for LastQty
+			if lastQty, err := strconv.ParseFloat(lastQtyStr, 64); err == nil {
+				report.LastQty = lastQty
+			} else {
+				log.Printf("[FIX] Warning: Error parsing LastQty: %v", err)
+			}
+		} else {
+			log.Printf("[FIX] Warning: Error extracting LastQty: %v", err)
+		}
+
+		// Extract CumQty
+		if cumQtyStr, err := m.Body.GetString(14); err == nil { // 14 is the tag for CumQty
+			if cumQty, err := strconv.ParseFloat(cumQtyStr, 64); err == nil {
+				report.CumQty = cumQty
+			} else {
+				log.Printf("[FIX] Warning: Error parsing CumQty: %v", err)
+			}
+		} else {
+			log.Printf("[FIX] Warning: Error extracting CumQty: %v", err)
+		}
+
+		// Extract LastPx
+		if lastPxStr, err := m.Body.GetString(31); err == nil { // 31 is the tag for LastPx
+			if lastPx, err := strconv.ParseFloat(lastPxStr, 64); err == nil {
+				report.LastPx = lastPx
+			} else {
+				log.Printf("[FIX] Warning: Error parsing LastPx: %v", err)
+				report.Error = fmt.Errorf("error parsing LastPx: %w", err)
+			}
+		} else {
+			log.Printf("[FIX] Warning: Error extracting LastPx: %v", err)
+		}
+
+		// Extract CumQuoteQty
+		if cumQuoteQtyStr, err := m.Body.GetString(25017); err == nil { // 25017 is the tag for CumQuoteQty
+			if cumQuoteQty, err := strconv.ParseFloat(cumQuoteQtyStr, 64); err == nil {
+				report.CumQuoteQty = cumQuoteQty
+			} else {
+				log.Printf("[FIX] Warning: Error parsing CumQuoteQty: %v", err)
+			}
+		} else {
+			log.Printf("[FIX] Warning: Error extracting CumQuoteQty: %v", err)
 		}
 
 		// Send the report to the waiting goroutine if there is one
 		e.pendingOrdersLock.Lock()
 		if ch, ok := e.pendingOrders[report.ClOrdID]; ok {
-			ch <- report
 			// If the order is terminal (filled, rejected, canceled), remove it from the map
 			if report.OrdStatus == "2" || report.OrdStatus == "4" || report.OrdStatus == "8" {
+				ch <- report
 				close(ch)
 				delete(e.pendingOrders, report.ClOrdID)
 			}
