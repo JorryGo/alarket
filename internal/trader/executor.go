@@ -18,15 +18,72 @@ import (
 //const secretKey = "0x26WvMtZietFtv5nGvqQnM2WrIlXTSzQGiCWej045lus55OKo5bemF1HHPQ3Vtn"
 
 type Executor struct {
-	client *binanceExecutor
+	client    *binanceExecutor
+	initiator *quickfix.Initiator
 }
 
 func InitExecutor() *Executor {
-	return &Executor{}
+	// Open settings file
+	settingsFile, err := os.Open("FIXAssets\\settings.ini")
+	if err != nil {
+		log.Printf("[FIX] Error opening settings file: %v", err)
+		return &Executor{}
+	}
+	defer settingsFile.Close()
+
+	// Parse settings
+	settings, err := quickfix.ParseSettings(settingsFile)
+	if err != nil {
+		log.Printf("[FIX] Error parsing settings: %v", err)
+		return &Executor{}
+	}
+
+	// Load private key
+	privateKey, err := loadEd25519Key("FIXAssets\\pkey.pem")
+	if err != nil {
+		log.Printf("[FIX] Error loading private key: %v", err)
+		return &Executor{}
+	}
+
+	// Initialize binanceExecutor
+	client := &binanceExecutor{
+		priv:     privateKey,
+		settings: settings,
+	}
+
+	// Create initiator
+	initiator, err := quickfix.NewInitiator(client, quickfix.NewMemoryStoreFactory(), settings, quickfix.NewScreenLogFactory())
+	if err != nil {
+		log.Printf("[FIX] Error creating initiator: %v", err)
+		return &Executor{
+			client: client,
+		}
+	}
+
+	// Start initiator to connect immediately
+	err = initiator.Start()
+	if err != nil {
+		log.Printf("[FIX] Error starting initiator: %v", err)
+		return &Executor{
+			client: client,
+		}
+	}
+
+	return &Executor{
+		client:    client,
+		initiator: initiator,
+	}
 }
 
 func (e *Executor) BuyMarket(symbol string, quantity float64) (float64, error) {
 	return 1.4, nil
+}
+
+// Close gracefully shuts down the FIX connection
+func (e *Executor) Close() {
+	if e.initiator != nil {
+		e.initiator.Stop()
+	}
 }
 
 // The ASCII <SOH> that delimits FIX fields.
@@ -48,15 +105,21 @@ type binanceExecutor struct {
 
 // --- QuickFIX/Go Application callbacks --------------------------------------------------
 
-func (e *binanceExecutor) OnCreate(sessionID quickfix.SessionID) {}
+func (e *binanceExecutor) OnCreate(sessionID quickfix.SessionID) {
+	log.Printf("[FIX] Create %v", sessionID)
+}
 func (e *binanceExecutor) OnLogon(sessionID quickfix.SessionID) {
 	log.Printf("[FIX] Logon %v", sessionID)
 }
 func (e *binanceExecutor) OnLogout(sessionID quickfix.SessionID) {
 	log.Printf("[FIX] Logout %v", sessionID)
 }
-func (e *binanceExecutor) FromAdmin(msg *quickfix.Message, _ quickfix.SessionID) error { return nil }
-func (e *binanceExecutor) ToApp(_ *quickfix.Message, _ quickfix.SessionID) error       { return nil }
+func (e *binanceExecutor) FromAdmin(msg *quickfix.Message, _ quickfix.SessionID) quickfix.MessageRejectError {
+	msgType, _ := msg.MsgType()
+	log.Printf("[FIX] inbound %s: %s", msgType, msg.String())
+	return nil
+}
+func (e *binanceExecutor) ToApp(_ *quickfix.Message, _ quickfix.SessionID) error { return nil }
 func (e *binanceExecutor) FromApp(m *quickfix.Message, _ quickfix.SessionID) quickfix.MessageRejectError {
 	msgType, _ := m.MsgType()
 	log.Printf("[FIX] inbound %s: %s", msgType, m.String())
@@ -73,10 +136,12 @@ func (e *binanceExecutor) ToAdmin(m *quickfix.Message, sid quickfix.SessionID) {
 	// Pull session/global settings.
 	var hbInt int
 	var user string
+	var messageHandling int
 
 	if sessCfg, ok := e.settings.SessionSettings()[sid]; ok {
 		user, _ = sessCfg.Setting("Username")
 		hbInt, _ = sessCfg.IntSetting(config.HeartBtInt)
+		messageHandling, _ = sessCfg.IntSetting("MessageHandling")
 	}
 	if user == "" { // fall back to [DEFAULT]
 		user, _ = e.settings.GlobalSettings().Setting("Username")
@@ -84,12 +149,16 @@ func (e *binanceExecutor) ToAdmin(m *quickfix.Message, sid quickfix.SessionID) {
 	if hbInt == 0 {
 		hbInt, _ = e.settings.GlobalSettings().IntSetting(config.HeartBtInt)
 	}
+	if messageHandling == 0 {
+		messageHandling, _ = e.settings.GlobalSettings().IntSetting("MessageHandling")
+	}
 
 	// Minimal mandatory body fields.
-	m.Body.SetString(553, user) // Username – Binance uses this for API Key
-	m.Body.SetInt(98, 0)        // EncryptMethod=0 (none)
-	m.Body.SetInt(108, hbInt)   // HeartBtInt seconds
-	m.Body.SetBool(141, true)   // ResetSeqNumFlag=Y
+	m.Body.SetString(553, user)           // Username – Binance uses this for API Key
+	m.Body.SetInt(98, 0)                  // EncryptMethod=0 (none)
+	m.Body.SetInt(108, hbInt)             // HeartBtInt seconds
+	m.Body.SetBool(141, true)             // ResetSeqNumFlag=Y
+	m.Body.SetInt(25035, messageHandling) // MessageHandling
 
 	// Build Binance-specific payload to sign.
 	seqNum, _ := m.Header.GetInt(34)
