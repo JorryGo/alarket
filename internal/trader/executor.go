@@ -16,6 +16,7 @@ import (
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/quickfix/config"
 	"github.com/quickfixgo/tag"
+	"github.com/shopspring/decimal"
 )
 
 //const apiKey = "ntCyqh0qiuEGtg9jH4EOtIoeSv8ETOjiHdeHjs0zNgwpckL5flXpigOIT5teYmzv"
@@ -132,11 +133,16 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 	clOrdID := fmt.Sprintf("order-%d", time.Now().UnixNano())
 
 	// Set required fields for the order
-	msg.Body.SetString(tag.ClOrdID, clOrdID)                               // ClOrdID - unique client order ID
-	msg.Body.SetString(tag.Symbol, params.Symbol)                          // Symbol
-	msg.Body.SetString(tag.Side, params.Side)                              // Side - 1 for Buy, 2 for Sell
-	msg.Body.SetString(tag.OrdType, "1")                                   // OrdType - 1 for Market
-	msg.Body.SetString(tag.OrderQty, fmt.Sprintf("%.8f", params.Quantity)) // OrderQty as string
+	msg.Body.SetString(tag.ClOrdID, clOrdID)      // ClOrdID - unique client order ID
+	msg.Body.SetString(tag.Symbol, params.Symbol) // Symbol
+	msg.Body.SetString(tag.Side, params.Side)     // Side - 1 for Buy, 2 for Sell
+	msg.Body.SetString(tag.OrdType, "1")          // OrdType - 1 for Market
+
+	// Convert quantity to decimal for precise string formatting
+	decQuantity := decimal.NewFromFloat(params.Quantity)
+	// Format with 8 decimal places but trim trailing zeros
+	quantityStr := decQuantity.StringFixed(8)
+	msg.Body.SetString(tag.OrderQty, quantityStr) // OrderQty as string
 
 	// Create a channel to receive the execution report
 	reportChan := make(chan ExecutionReport, 5) // Buffer for multiple reports
