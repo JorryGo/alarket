@@ -206,53 +206,16 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 
 	// Check if USDT is in BaseAsset or QuoteAsset position
 	if node.Symbol.BaseAsset == "USDT" {
-		// If USDT is the base asset, we need to sell USDT to get the quote asset
-		// For selling, the quantity is in terms of the base asset (USDT), so we can use currentUSDT directly
-		// Adjust the quantity to meet lot size requirements
+		// Если USDT является базовым активом, мы продаем USDT за квотируемый актив
 		adjustedQuantity := t.adjustQuantityToLotSize(firstSymbol, currentUSDT)
-		// Update initialUSDT to the actual amount spent after adjustment
 		initialUSDT = adjustedQuantity
 		fmt.Printf("Executing first trade: %s, selling %.2f USDT\n", firstSymbol, adjustedQuantity)
 		firstReport, err = t.executor.SellMarket(firstSymbol, adjustedQuantity)
 	} else {
-		// If USDT is the quote asset, we need to buy the base asset with USDT
-		// For buying, the quantity must be in terms of the base asset, not USDT
-		// We need to calculate how much of the base asset we can buy with our USDT
-		askPrice, ok := t.AskPrice(firstSymbol)
-		if !ok {
-			fmt.Printf("Error getting ask price for %s\n", firstSymbol)
-			return false
-		}
-
-		// Calculate the quantity of the base asset we can buy with our USDT
-		// Use decimal for precise division
-		decCurrentUSDT := decimal.NewFromFloat(currentUSDT)
-		decAskPrice := decimal.NewFromFloat(askPrice)
-		// Check for zero divisor to prevent panic
-		if decAskPrice.IsZero() {
-			fmt.Printf("Error: Ask price for %s is zero\n", firstSymbol)
-			return false
-		}
-		decBaseAssetQuantity := decCurrentUSDT.Div(decAskPrice)
-
-		// Convert back to float64 for compatibility
-		baseAssetQuantity, _ := decBaseAssetQuantity.Float64()
-
-		// Adjust the quantity to meet lot size requirements
-		adjustedQuantity := t.adjustQuantityToLotSize(firstSymbol, baseAssetQuantity)
-
-		// Update initialUSDT to the actual amount spent after adjustment
-		// Use decimal for precise multiplication
-		decAdjustedQuantity := decimal.NewFromFloat(adjustedQuantity)
-		// Reuse the existing decAskPrice variable
-		decInitialUSDT := decAdjustedQuantity.Mul(decAskPrice)
-
-		// Convert back to float64 for compatibility
-		initialUSDT, _ = decInitialUSDT.Float64()
-
-		fmt.Printf("Executing first trade: %s, buying %.8f %s with %.2f USDT (price: %.8f)\n",
-			firstSymbol, adjustedQuantity, node.Symbol.BaseAsset, initialUSDT, askPrice)
-		firstReport, err = t.executor.BuyMarket(firstSymbol, adjustedQuantity)
+		// Если USDT является квотируемым активом, мы покупаем базовый актив за USDT
+		// Здесь используем quoteOrderQty - указываем сколько USDT мы хотим потратить
+		fmt.Printf("Executing first trade: %s, buying base asset with %.2f USDT\n", firstSymbol, currentUSDT)
+		firstReport, err = t.executor.BuyMarketQuote(firstSymbol, currentUSDT)
 	}
 
 	if err != nil {
@@ -266,235 +229,97 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 		fmt.Printf("Updated initialUSDT to %.8f USDT based on actual trade execution\n", initialUSDT)
 	}
 
-	// Update current amount based on the execution report
-	currentAmount := firstReport.CumQty
-
-	// After first trade, determine which asset we own based on the trade direction
-	if node.Symbol.BaseAsset == "USDT" {
-		// If we sold USDT (base asset), we now own the quote asset
-		ownerOfCoin = node.Symbol.QuoteAsset
-	} else {
-		// If we bought with USDT (quote asset), we now own the base asset
-		ownerOfCoin = node.Symbol.BaseAsset
+	// Определяем, какой актив мы получили и его количество
+	var currentAmount float64
+	if firstReport.Side == "1" { // Buy - купили базовый актив
+		currentAmount = firstReport.CumQty
+		ownerOfCoin = node.Symbol.BaseAsset // Мы получили базовый актив
+	} else { // Sell - продали базовый актив, получили квотируемый
+		currentAmount = firstReport.CumQuoteQty
+		ownerOfCoin = node.Symbol.QuoteAsset // Мы получили квотируемый актив
 	}
 
 	fmt.Printf("First trade executed: Got %.8f %s\n", currentAmount, ownerOfCoin)
 
-	// Second trade
-	secondSymbol := pathParts[1]
+	// Second trade: Use the asset we got from the first trade
+	fmt.Printf("Executing second trade: %s\n", secondNode.SymbolName)
 	var secondReport ExecutionReport
 
+	// Determine if we need to buy or sell based on the symbol and what we own
 	if secondNode.Symbol.BaseAsset == ownerOfCoin {
-		// We're selling our asset (which is the base asset)
-		// For selling, the quantity is in terms of the base asset, so we can use currentAmount directly
-		// Adjust the quantity to meet lot size requirements
-		adjustedQuantity := t.adjustQuantityToLotSize(secondSymbol, currentAmount)
-		fmt.Printf("Executing second trade: %s, selling %.8f %s\n", secondSymbol, adjustedQuantity, ownerOfCoin)
-		secondReport, err = t.executor.SellMarket(secondSymbol, adjustedQuantity)
-		// After selling, we now own the quote asset
-		ownerOfCoin = secondNode.Symbol.QuoteAsset
-
-		// Apply price conversion for the second trade if the symbol is not in the trading tree
-		// This is a workaround for the mock execution environment
-		if _, ok := t.tradingTree[secondSymbol]; !ok {
-			// Get the bid price for the symbol if available
-			bidPrice, ok := t.BidPrice(secondSymbol)
-			if ok && bidPrice > 0 {
-				// Apply the price conversion
-				// Use decimal for precise multiplication
-				decAdjustedQuantity := decimal.NewFromFloat(adjustedQuantity)
-				decBidPrice := decimal.NewFromFloat(bidPrice)
-				decCumQty := decAdjustedQuantity.Mul(decBidPrice)
-
-				// Convert back to float64 for compatibility
-				secondReport.CumQty, _ = decCumQty.Float64()
-
-				fmt.Printf("Applied price conversion for %s: %.8f %s * %.8f = %.8f %s\n",
-					secondSymbol, adjustedQuantity, secondNode.Symbol.BaseAsset, bidPrice, secondReport.CumQty, ownerOfCoin)
-			} else {
-				// If bid price is not available, use a default conversion rate of 1.0
-				// In a real environment, this should be handled differently
-				fmt.Printf("Warning: Using default price conversion for %s\n", secondSymbol)
-				secondReport.CumQty = adjustedQuantity
-			}
-		}
+		// Мы владеем базовым активом, поэтому продаем его
+		fmt.Printf("Selling %.8f %s\n", currentAmount, ownerOfCoin)
+		secondReport, err = t.executor.SellMarket(secondNode.SymbolName, currentAmount)
+		// После продажи определим, что мы получили, в обработке ниже
 	} else {
-		// We're buying with our asset (which is the quote asset)
-		// For buying, the quantity must be in terms of the base asset, not the quote asset
-		// We need to calculate how much of the base asset we can buy with our quote asset
-		askPrice, ok := t.AskPrice(secondSymbol)
-		if !ok {
-			fmt.Printf("Error getting ask price for %s\n", secondSymbol)
-			return false
-		}
-
-		// Calculate the quantity of the base asset we can buy with our quote asset
-		// Use decimal for precise division
-		decCurrentAmount := decimal.NewFromFloat(currentAmount)
-		decAskPrice := decimal.NewFromFloat(askPrice)
-		// Check for zero divisor to prevent panic
-		if decAskPrice.IsZero() {
-			fmt.Printf("Error: Ask price for %s is zero\n", secondSymbol)
-			return false
-		}
-		decBaseAssetQuantity := decCurrentAmount.Div(decAskPrice)
-
-		// Convert back to float64 for compatibility
-		baseAssetQuantity, _ := decBaseAssetQuantity.Float64()
-
-		// Adjust the quantity to meet lot size requirements
-		adjustedQuantity := t.adjustQuantityToLotSize(secondSymbol, baseAssetQuantity)
-
-		fmt.Printf("Executing second trade: %s, buying %.8f %s with %.8f %s (price: %.8f)\n",
-			secondSymbol, adjustedQuantity, secondNode.Symbol.BaseAsset, currentAmount, ownerOfCoin, askPrice)
-		secondReport, err = t.executor.BuyMarket(secondSymbol, adjustedQuantity)
-		// After buying, we now own the base asset
-		ownerOfCoin = secondNode.Symbol.BaseAsset
-
-		// Apply price conversion for the second trade if the symbol is not in the trading tree
-		// This is a workaround for the mock execution environment
-		if _, ok := t.tradingTree[secondSymbol]; !ok {
-			// If ask price is available, use it for the conversion
-			if askPrice > 0 {
-				// Apply the price conversion
-				secondReport.CumQty = currentAmount / askPrice
-				fmt.Printf("Applied price conversion for %s: %.8f %s / %.8f = %.8f %s\n",
-					secondSymbol, currentAmount, secondNode.Symbol.QuoteAsset, askPrice, secondReport.CumQty, ownerOfCoin)
-			} else {
-				// If ask price is not available, use a default conversion rate of 1.0
-				// In a real environment, this should be handled differently
-				fmt.Printf("Warning: Using default price conversion for %s\n", secondSymbol)
-				secondReport.CumQty = adjustedQuantity
-			}
-		}
+		// Мы владеем квотируемым активом, поэтому покупаем базовый актив
+		// Используем всё количество квотируемого актива, которое у нас есть
+		fmt.Printf("Buying base asset with %.8f %s\n", currentAmount, ownerOfCoin)
+		secondReport, err = t.executor.BuyMarketQuote(secondNode.SymbolName, currentAmount)
+		// После покупки определим, что мы получили, в обработке ниже
 	}
 
 	if err != nil {
 		fmt.Printf("Error executing second trade: %v\n", err)
+		t.executor.Close()
 		return false
 	}
 
-	// Update current amount based on the execution report
-	currentAmount = secondReport.CumQty
+	// Определяем, какой актив мы получили и его количество
+	if secondReport.Side == "1" { // Buy - купили базовый актив
+		currentAmount = secondReport.CumQty
+		ownerOfCoin = secondNode.Symbol.BaseAsset // Мы получили базовый актив
+	} else { // Sell - продали базовый актив, получили квотируемый
+		currentAmount = secondReport.CumQuoteQty
+		ownerOfCoin = secondNode.Symbol.QuoteAsset // Мы получили квотируемый актив
+	}
+
 	fmt.Printf("Second trade executed: Got %.8f %s\n", currentAmount, ownerOfCoin)
 
-	// Third trade
-	lastSymbol := pathParts[2]
-	var lastReport ExecutionReport
+	// Third trade: Complete the chain and return to the initial coin (USDT)
+	fmt.Printf("Executing third trade: %s\n", lastNode.SymbolName)
+	var thirdReport ExecutionReport
 
+	// Determine if we need to buy or sell based on the symbol and what we own
 	if lastNode.Symbol.BaseAsset == ownerOfCoin {
-		// We're selling our asset (which is the base asset)
-		// For selling, the quantity is in terms of the base asset, so we can use currentAmount directly
-		// Adjust the quantity to meet lot size requirements
-		adjustedQuantity := t.adjustQuantityToLotSize(lastSymbol, currentAmount)
-		fmt.Printf("Executing third trade: %s, selling %.8f %s\n", lastSymbol, adjustedQuantity, ownerOfCoin)
-		lastReport, err = t.executor.SellMarket(lastSymbol, adjustedQuantity)
-
-		// Apply price conversion for the third trade if the symbol is not in the trading tree
-		// This is a workaround for the mock execution environment
-		if _, ok := t.tradingTree[lastSymbol]; !ok {
-			// Get the bid price for the symbol if available
-			bidPrice, ok := t.BidPrice(lastSymbol)
-			if ok && bidPrice > 0 {
-				// Apply the price conversion
-				// Use decimal for precise multiplication
-				decAdjustedQuantity := decimal.NewFromFloat(adjustedQuantity)
-				decBidPrice := decimal.NewFromFloat(bidPrice)
-				decCumQuoteQty := decAdjustedQuantity.Mul(decBidPrice)
-
-				// Convert back to float64 for compatibility
-				lastReport.CumQuoteQty, _ = decCumQuoteQty.Float64()
-
-				fmt.Printf("Applied price conversion for %s: %.8f %s * %.8f = %.8f USDT\n",
-					lastSymbol, adjustedQuantity, lastNode.Symbol.BaseAsset, bidPrice, lastReport.CumQuoteQty)
-			} else {
-				// If bid price is not available, use a default conversion rate of 1.0
-				// In a real environment, this should be handled differently
-				fmt.Printf("Warning: Using default price conversion for %s\n", lastSymbol)
-				lastReport.CumQuoteQty = adjustedQuantity
-			}
-		}
+		// Мы владеем базовым активом, поэтому продаем его
+		fmt.Printf("Selling %.8f %s\n", currentAmount, ownerOfCoin)
+		thirdReport, err = t.executor.SellMarket(lastNode.SymbolName, currentAmount)
+		// После продажи определим, что мы получили, в обработке ниже
 	} else {
-		// We're buying with our asset (which is the quote asset)
-		// For buying, the quantity must be in terms of the base asset, not the quote asset
-		// We need to calculate how much of the base asset we can buy with our quote asset
-		askPrice, ok := t.AskPrice(lastSymbol)
-		if !ok {
-			fmt.Printf("Error getting ask price for %s\n", lastSymbol)
-			return false
-		}
-
-		// Calculate the quantity of the base asset we can buy with our quote asset
-		// Use decimal for precise division
-		decCurrentAmount := decimal.NewFromFloat(currentAmount)
-		decAskPrice := decimal.NewFromFloat(askPrice)
-		// Check for zero divisor to prevent panic
-		if decAskPrice.IsZero() {
-			fmt.Printf("Error: Ask price for %s is zero\n", lastSymbol)
-			return false
-		}
-		decBaseAssetQuantity := decCurrentAmount.Div(decAskPrice)
-
-		// Convert back to float64 for compatibility
-		baseAssetQuantity, _ := decBaseAssetQuantity.Float64()
-
-		// Adjust the quantity to meet lot size requirements
-		adjustedQuantity := t.adjustQuantityToLotSize(lastSymbol, baseAssetQuantity)
-
-		fmt.Printf("Executing third trade: %s, buying %.8f %s with %.8f %s (price: %.8f)\n",
-			lastSymbol, adjustedQuantity, lastNode.Symbol.BaseAsset, currentAmount, ownerOfCoin, askPrice)
-		lastReport, err = t.executor.BuyMarket(lastSymbol, adjustedQuantity)
-
-		// Apply price conversion for the third trade if the symbol is not in the trading tree
-		// This is a workaround for the mock execution environment
-		if _, ok := t.tradingTree[lastSymbol]; !ok {
-			// If ask price is available, use it for the conversion
-			if askPrice > 0 {
-				// Apply the price conversion
-				lastReport.CumQuoteQty = currentAmount
-				fmt.Printf("Applied price conversion for %s: using quote amount %.8f USDT\n",
-					lastSymbol, lastReport.CumQuoteQty)
-			} else {
-				// If ask price is not available, use a default conversion rate of 1.0
-				// In a real environment, this should be handled differently
-				fmt.Printf("Warning: Using default price conversion for %s\n", lastSymbol)
-				lastReport.CumQuoteQty = currentAmount
-			}
-		}
+		// Мы владеем квотируемым активом, поэтому покупаем базовый актив
+		// Используем всё количество квотируемого актива, которое у нас есть
+		fmt.Printf("Buying base asset with %.8f %s\n", currentAmount, ownerOfCoin)
+		thirdReport, err = t.executor.BuyMarketQuote(lastNode.SymbolName, currentAmount)
+		// После покупки определим, что мы получили, в обработке ниже
 	}
 
 	if err != nil {
 		fmt.Printf("Error executing third trade: %v\n", err)
-		return false
+		t.executor.Close()
+		panic(err)
 	}
 
-	// Final amount in USDT
-	finalUSDT := lastReport.CumQuoteQty
+	// Определяем, какой актив мы получили и его количество
+	if thirdReport.Side == "1" { // Buy - купили базовый актив
+		currentAmount = thirdReport.CumQty
+		ownerOfCoin = lastNode.Symbol.BaseAsset // Мы получили базовый актив
+	} else { // Sell - продали базовый актив, получили квотируемый
+		currentAmount = thirdReport.CumQuoteQty
+		ownerOfCoin = lastNode.Symbol.QuoteAsset // Мы получили квотируемый актив
+	}
 
-	// Use decimal for precise profit calculations
-	decFinalUSDT := decimal.NewFromFloat(finalUSDT)
-	decInitialUSDT := decimal.NewFromFloat(initialUSDT)
+	fmt.Printf("Third trade executed: Got %.8f %s\n", currentAmount, ownerOfCoin)
 
-	// Calculate profit
-	decProfit := decFinalUSDT.Sub(decInitialUSDT)
-	profit, _ := decProfit.Float64()
-
-	// Calculate profit percentage
-	var decProfitPercentage decimal.Decimal
-	if decInitialUSDT.IsZero() {
-		// Avoid division by zero
-		fmt.Printf("Warning: Initial USDT is zero, cannot calculate profit percentage\n")
-		decProfitPercentage = decimal.NewFromFloat(0)
+	// Check if we've returned to the initial coin (USDT)
+	if ownerOfCoin == "USDT" {
+		fmt.Printf("Successfully completed trading chain, returned to USDT with %.8f\n", currentAmount)
 	} else {
-		decProfitPercentage = decProfit.Div(decInitialUSDT).Mul(decimal.NewFromFloat(100))
+		fmt.Printf("Warning: Trading chain did not return to USDT, ended with %.8f %s\n", currentAmount, ownerOfCoin)
 	}
-	profitPercentage, _ := decProfitPercentage.Float64()
 
-	fmt.Printf("Trades completed! Initial: %.2f USDT, Final: %.2f USDT\n", initialUSDT, finalUSDT)
-	fmt.Printf("Profit: %.2f USDT (%.2f%%)\n", profit, profitPercentage)
-	t.executor.Close()
-	panic("stop")
-
+	//t.executor.Close()
+	//panic("done")
 	return true
 }
 

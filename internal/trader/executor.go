@@ -19,6 +19,11 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// Константы для конфигурации
+const (
+	DEFAULT_RETRY_COUNT = 3 // Дефолтное количество повторных попыток (всего будет 3 попытки: 1 начальная + 2 повторных)
+)
+
 //const apiKey = "ntCyqh0qiuEGtg9jH4EOtIoeSv8ETOjiHdeHjs0zNgwpckL5flXpigOIT5teYmzv"
 //const secretKey = "0x26WvMtZietFtv5nGvqQnM2WrIlXTSzQGiCWej045lus55OKo5bemF1HHPQ3Vtn"
 
@@ -85,16 +90,20 @@ func InitExecutor() *Executor {
 
 // MarketOrderParams holds parameters for a market order
 type MarketOrderParams struct {
-	Symbol   string
-	Quantity float64
-	Side     string // "1" for Buy, "2" for Sell
+	Symbol          string
+	Quantity        float64
+	Side            string // "1" for Buy, "2" for Sell
+	IsQuoteOrderQty bool
+	RetryCount      int // Количество оставшихся попыток повторения
 }
 
 func (e *Executor) BuyMarket(symbol string, quantity float64) (ExecutionReport, error) {
 	params := MarketOrderParams{
-		Symbol:   symbol,
-		Quantity: quantity,
-		Side:     "1", // Buy
+		Symbol:          symbol,
+		Quantity:        quantity,
+		Side:            "1",   // Buy
+		IsQuoteOrderQty: false, // Обычный ордер на количество базового актива
+		RetryCount:      DEFAULT_RETRY_COUNT,
 	}
 	return e.sendMarketOrder(params, "buy")
 }
@@ -102,11 +111,49 @@ func (e *Executor) BuyMarket(symbol string, quantity float64) (ExecutionReport, 
 // SellMarket sells the specified symbol at market price
 func (e *Executor) SellMarket(symbol string, quantity float64) (ExecutionReport, error) {
 	params := MarketOrderParams{
-		Symbol:   symbol,
-		Quantity: quantity,
-		Side:     "2", // Sell
+		Symbol:          symbol,
+		Quantity:        quantity,
+		Side:            "2",   // Sell
+		IsQuoteOrderQty: false, // Обычный ордер на количество базового актива
+		RetryCount:      DEFAULT_RETRY_COUNT,
 	}
 	return e.sendMarketOrder(params, "sell")
+}
+
+// BuyMarketQuote покупает базовый актив, указывая сумму в квотируемом активе
+// quoteQuantity - количество квотируемого актива (например, USDT), которое нужно потратить
+func (e *Executor) BuyMarketQuote(symbol string, quoteQuantity float64) (ExecutionReport, error) {
+	params := MarketOrderParams{
+		Symbol:          symbol,
+		Quantity:        quoteQuantity,
+		Side:            "1",  // Buy
+		IsQuoteOrderQty: true, // Ордер на сумму квотируемого актива
+		RetryCount:      DEFAULT_RETRY_COUNT,
+	}
+	return e.sendMarketOrder(params, "buy")
+}
+
+// SellMarketQuote продает базовый актив, указывая сумму в квотируемом активе, которую нужно получить
+func (e *Executor) SellMarketQuote(symbol string, quoteQuantity float64) (ExecutionReport, error) {
+	params := MarketOrderParams{
+		Symbol:          symbol,
+		Quantity:        quoteQuantity,
+		Side:            "2",  // Sell
+		IsQuoteOrderQty: true, // Ордер на сумму квотируемого актива
+		RetryCount:      DEFAULT_RETRY_COUNT,
+	}
+	return e.sendMarketOrder(params, "sell")
+}
+
+// safeClose безопасно закрывает канал, игнорируя панику, если канал уже закрыт
+func safeClose(ch chan ExecutionReport) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Игнорируем панику при закрытии канала, канал уже закрыт
+			log.Printf("[FIX] Warning: Attempted to close already closed channel: %v", r)
+		}
+	}()
+	close(ch)
 }
 
 // sendMarketOrder creates and sends a market order with the given parameters
@@ -142,10 +189,26 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 	decQuantity := decimal.NewFromFloat(params.Quantity)
 	// Format with 8 decimal places but trim trailing zeros
 	quantityStr := decQuantity.StringFixed(8)
-	msg.Body.SetString(tag.OrderQty, quantityStr) // OrderQty as string
+
+	// В зависимости от типа ордера, устанавливаем либо OrderQty, либо QuoteOrderQty
+	if params.IsQuoteOrderQty {
+		// Используем тег 152 (CashOrderQty) для указания суммы в квотируемом активе
+		msg.Body.SetString(tag.CashOrderQty, quantityStr) // CashOrderQty как строка
+	} else {
+		// Обычный ордер на определенное количество базового актива
+		msg.Body.SetString(tag.OrderQty, quantityStr) // OrderQty как строка
+	}
 
 	// Create a channel to receive the execution report
 	reportChan := make(chan ExecutionReport, 5) // Buffer for multiple reports
+
+	// Определяем функцию очистки ресурсов с безопасным закрытием канала
+	cleanupResources := func() {
+		e.client.pendingOrdersLock.Lock()
+		delete(e.client.pendingOrders, clOrdID)
+		e.client.pendingOrdersLock.Unlock()
+		safeClose(reportChan)
+	}
 
 	// Register the order in the pending orders map
 	e.client.pendingOrdersLock.Lock()
@@ -163,10 +226,7 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 	err := quickfix.SendToTarget(msg, sessionID)
 	if err != nil {
 		// Clean up if sending fails
-		e.client.pendingOrdersLock.Lock()
-		delete(e.client.pendingOrders, clOrdID)
-		e.client.pendingOrdersLock.Unlock()
-		close(reportChan)
+		cleanupResources()
 		return emptyReport, fmt.Errorf("failed to send market %s order: %w", orderType, err)
 	}
 
@@ -203,18 +263,42 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 				return report, nil
 			}
 
-			// Check if the order was rejected or canceled
-			if report.OrdStatus == "8" || report.OrdStatus == "4" { // REJECTED or CANCELED
+			// Check if the order was rejected
+			if report.OrdStatus == "8" { // REJECTED
+				// Если еще остались попытки, выполняем рекурсивный вызов
+				if params.RetryCount > 0 {
+					// Уменьшаем счетчик оставшихся попыток
+					params.RetryCount--
+
+					// Выводим информацию о повторной попытке
+					retryNumber := DEFAULT_RETRY_COUNT - params.RetryCount
+					totalAttempts := DEFAULT_RETRY_COUNT + 1 // +1 потому что начальная попытка тоже считается
+					fmt.Printf("Order %s rejected (status 8), retrying attempt %d/%d...\n",
+						clOrdID, retryNumber, totalAttempts)
+
+					// Очищаем ресурсы текущей попытки
+					cleanupResources()
+
+					// Ждем немного перед повторной попыткой
+					time.Sleep(500 * time.Millisecond)
+
+					// Рекурсивно вызываем sendMarketOrder с обновленными параметрами
+					return e.sendMarketOrder(params, orderType)
+				}
+
+				// Если попытки закончились, возвращаем ошибку
+				return report, fmt.Errorf("order was %s after multiple retries", report.OrdStatus)
+			}
+
+			// Check if order was canceled
+			if report.OrdStatus == "4" { // CANCELED
 				return report, fmt.Errorf("order was %s", report.OrdStatus)
 			}
 
 		case <-timeout:
 			// Clean up on timeout
-			e.client.pendingOrdersLock.Lock()
-			delete(e.client.pendingOrders, clOrdID)
-			e.client.pendingOrdersLock.Unlock()
-			close(reportChan)
-			return emptyReport, fmt.Errorf("timeout waiting for execution report")
+			cleanupResources()
+			return emptyReport, fmt.Errorf("timed out waiting for %s order execution report", orderType)
 		}
 	}
 }
@@ -244,7 +328,7 @@ func (e *binanceExecutor) isConnectedAndAuthenticated() bool {
 // The ASCII <SOH> that delimits FIX fields.
 const soh = "\x01"
 
-// binanceExecutor adapts the QuickFIX/Go “executor” example for Binance **Spot FIX‑OE**.
+// binanceExecutor adapts the QuickFIX/Go "executor" example for Binance **Spot FIX-OE**.
 // See: https://developers.binance.com/docs/binance-spot-api-docs/fix-api
 //
 // Main differences vs. vanilla executor:
@@ -271,7 +355,7 @@ type ExecutionReport struct {
 
 type binanceExecutor struct {
 	priv     ed25519.PrivateKey
-	settings *quickfix.Settings // full parsed config, so we can read per‑session params
+	settings *quickfix.Settings // full parsed config, so we can read per-session params
 
 	// Map to store pending orders and channels to receive execution reports
 	pendingOrders     map[string]chan ExecutionReport
