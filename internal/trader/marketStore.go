@@ -211,12 +211,32 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 		adjustedQuantity := t.adjustQuantityToLotSize(node, currentUSDT)
 		initialUSDT = adjustedQuantity
 		fmt.Printf("Executing first trade: %s, selling %.8f USDT\n", firstSymbol, adjustedQuantity)
-		firstReport, err = t.executor.SellMarket(firstSymbol, adjustedQuantity)
+
+		// Create market order params with stepSize
+		params := MarketOrderParams{
+			Symbol:          firstSymbol,
+			Quantity:        adjustedQuantity,
+			Side:            "2", // Sell
+			IsQuoteOrderQty: false,
+			RetryCount:      DEFAULT_RETRY_COUNT,
+			StepSize:        node.LotStepSize,
+		}
+		firstReport, err = t.executor.SendMarketOrder(params, "sell")
 	} else {
 		// Если USDT является квотируемым активом, мы покупаем базовый актив за USDT
 		// Здесь используем quoteOrderQty - указываем сколько USDT мы хотим потратить
 		fmt.Printf("Executing first trade: %s, buying base asset with %.8f USDT\n", firstSymbol, currentUSDT)
-		firstReport, err = t.executor.BuyMarketQuote(firstSymbol, currentUSDT)
+
+		// Create market order params with stepSize
+		params := MarketOrderParams{
+			Symbol:          firstSymbol,
+			Quantity:        currentUSDT,
+			Side:            "1", // Buy
+			IsQuoteOrderQty: true,
+			RetryCount:      DEFAULT_RETRY_COUNT,
+			StepSize:        node.LotStepSize,
+		}
+		firstReport, err = t.executor.SendMarketOrder(params, "buy")
 	}
 
 	if err != nil {
@@ -252,13 +272,33 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 		// Мы владеем базовым активом, поэтому продаем его
 		adjustedAmount := t.adjustQuantityToLotSize(secondNode, currentAmount)
 		fmt.Printf("Selling %.8f %s (adjusted from %.8f)\n", adjustedAmount, ownerOfCoin, currentAmount)
-		secondReport, err = t.executor.SellMarket(secondSymbol, adjustedAmount)
+
+		// Create market order params with stepSize
+		params := MarketOrderParams{
+			Symbol:          secondSymbol,
+			Quantity:        adjustedAmount,
+			Side:            "2", // Sell
+			IsQuoteOrderQty: false,
+			RetryCount:      DEFAULT_RETRY_COUNT,
+			StepSize:        secondNode.LotStepSize,
+		}
+		secondReport, err = t.executor.SendMarketOrder(params, "sell")
 		// После продажи определим, что мы получили, в обработке ниже
 	} else {
 		// Мы владеем квотируемым активом, поэтому покупаем базовый актив
 		// Используем всё количество квотируемого актива, которое у нас есть
 		fmt.Printf("Buying base asset with %.8f %s\n", currentAmount, ownerOfCoin)
-		secondReport, err = t.executor.BuyMarketQuote(secondSymbol, currentAmount)
+
+		// Create market order params with stepSize
+		params := MarketOrderParams{
+			Symbol:          secondSymbol,
+			Quantity:        currentAmount,
+			Side:            "1", // Buy
+			IsQuoteOrderQty: true,
+			RetryCount:      DEFAULT_RETRY_COUNT,
+			StepSize:        secondNode.LotStepSize,
+		}
+		secondReport, err = t.executor.SendMarketOrder(params, "buy")
 		// После покупки определим, что мы получили, в обработке ниже
 	}
 
@@ -289,13 +329,33 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 		// Мы владеем базовым активом, поэтому продаем его
 		adjustedAmount := t.adjustQuantityToLotSize(lastNode, currentAmount)
 		fmt.Printf("Selling %.8f %s (adjusted from %.8f)\n", adjustedAmount, ownerOfCoin, currentAmount)
-		thirdReport, err = t.executor.SellMarket(thirdSymbol, adjustedAmount)
+
+		// Create market order params with stepSize
+		params := MarketOrderParams{
+			Symbol:          thirdSymbol,
+			Quantity:        adjustedAmount,
+			Side:            "2", // Sell
+			IsQuoteOrderQty: false,
+			RetryCount:      DEFAULT_RETRY_COUNT,
+			StepSize:        lastNode.LotStepSize,
+		}
+		thirdReport, err = t.executor.SendMarketOrder(params, "sell")
 		// После продажи определим, что мы получили, в обработке ниже
 	} else {
 		// Мы владеем квотируемым активом, поэтому покупаем базовый актив
 		// Используем всё количество квотируемого актива, которое у нас есть
 		fmt.Printf("Buying base asset with %.8f %s\n", currentAmount, ownerOfCoin)
-		thirdReport, err = t.executor.BuyMarketQuote(thirdSymbol, currentAmount)
+
+		// Create market order params with stepSize
+		params := MarketOrderParams{
+			Symbol:          thirdSymbol,
+			Quantity:        currentAmount,
+			Side:            "1", // Buy
+			IsQuoteOrderQty: true,
+			RetryCount:      DEFAULT_RETRY_COUNT,
+			StepSize:        lastNode.LotStepSize,
+		}
+		thirdReport, err = t.executor.SendMarketOrder(params, "buy")
 		// После покупки определим, что мы получили, в обработке ниже
 	}
 
@@ -438,7 +498,7 @@ func (t *Trader) checkLoop(node *processors.SymbolTree, initialAmount float64) {
 
 			//fmt.Println(path, currentAmount)
 
-			if potentialGrowth > 0.0 {
+			if potentialGrowth > 0.3 {
 				out = append(out, fmt.Sprintf("%s %f", path, currentAmount))
 				//fmt.Println(path, currentAmount)
 

@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -94,9 +95,12 @@ type MarketOrderParams struct {
 	Quantity        float64
 	Side            string // "1" for Buy, "2" for Sell
 	IsQuoteOrderQty bool
-	RetryCount      int // Количество оставшихся попыток повторения
+	RetryCount      int     // Количество оставшихся попыток повторения
+	StepSize        float64 // Step size for the trading pair
 }
 
+// BuyMarket is now a method that can be exposed but is mainly for backwards compatibility
+// It directly calls SendMarketOrder with default stepSize
 func (e *Executor) BuyMarket(symbol string, quantity float64) (ExecutionReport, error) {
 	params := MarketOrderParams{
 		Symbol:          symbol,
@@ -104,11 +108,13 @@ func (e *Executor) BuyMarket(symbol string, quantity float64) (ExecutionReport, 
 		Side:            "1",   // Buy
 		IsQuoteOrderQty: false, // Обычный ордер на количество базового актива
 		RetryCount:      DEFAULT_RETRY_COUNT,
+		StepSize:        0, // Default stepSize
 	}
-	return e.sendMarketOrder(params, "buy")
+	return e.SendMarketOrder(params, "buy")
 }
 
-// SellMarket sells the specified symbol at market price
+// SellMarket is now a method that can be exposed but is mainly for backwards compatibility
+// It directly calls SendMarketOrder with default stepSize
 func (e *Executor) SellMarket(symbol string, quantity float64) (ExecutionReport, error) {
 	params := MarketOrderParams{
 		Symbol:          symbol,
@@ -116,12 +122,13 @@ func (e *Executor) SellMarket(symbol string, quantity float64) (ExecutionReport,
 		Side:            "2",   // Sell
 		IsQuoteOrderQty: false, // Обычный ордер на количество базового актива
 		RetryCount:      DEFAULT_RETRY_COUNT,
+		StepSize:        0, // Default stepSize
 	}
-	return e.sendMarketOrder(params, "sell")
+	return e.SendMarketOrder(params, "sell")
 }
 
-// BuyMarketQuote покупает базовый актив, указывая сумму в квотируемом активе
-// quoteQuantity - количество квотируемого актива (например, USDT), которое нужно потратить
+// BuyMarketQuote is now a method that can be exposed but is mainly for backwards compatibility
+// It directly calls SendMarketOrder with default stepSize
 func (e *Executor) BuyMarketQuote(symbol string, quoteQuantity float64) (ExecutionReport, error) {
 	params := MarketOrderParams{
 		Symbol:          symbol,
@@ -129,11 +136,13 @@ func (e *Executor) BuyMarketQuote(symbol string, quoteQuantity float64) (Executi
 		Side:            "1",  // Buy
 		IsQuoteOrderQty: true, // Ордер на сумму квотируемого актива
 		RetryCount:      DEFAULT_RETRY_COUNT,
+		StepSize:        0, // Default stepSize
 	}
-	return e.sendMarketOrder(params, "buy")
+	return e.SendMarketOrder(params, "buy")
 }
 
-// SellMarketQuote продает базовый актив, указывая сумму в квотируемом активе, которую нужно получить
+// SellMarketQuote is now a method that can be exposed but is mainly for backwards compatibility
+// It directly calls SendMarketOrder with default stepSize
 func (e *Executor) SellMarketQuote(symbol string, quoteQuantity float64) (ExecutionReport, error) {
 	params := MarketOrderParams{
 		Symbol:          symbol,
@@ -141,8 +150,9 @@ func (e *Executor) SellMarketQuote(symbol string, quoteQuantity float64) (Execut
 		Side:            "2",  // Sell
 		IsQuoteOrderQty: true, // Ордер на сумму квотируемого актива
 		RetryCount:      DEFAULT_RETRY_COUNT,
+		StepSize:        0, // Default stepSize
 	}
-	return e.sendMarketOrder(params, "sell")
+	return e.SendMarketOrder(params, "sell")
 }
 
 // safeClose безопасно закрывает канал, игнорируя панику, если канал уже закрыт
@@ -156,8 +166,8 @@ func safeClose(ch chan ExecutionReport) {
 	close(ch)
 }
 
-// sendMarketOrder creates and sends a market order with the given parameters
-func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (ExecutionReport, error) {
+// SendMarketOrder creates and sends a market order with the given parameters
+func (e *Executor) SendMarketOrder(params MarketOrderParams, orderType string) (ExecutionReport, error) {
 	// Create an empty report
 	emptyReport := ExecutionReport{}
 
@@ -185,10 +195,22 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 	msg.Body.SetString(tag.Side, params.Side)     // Side - 1 for Buy, 2 for Sell
 	msg.Body.SetString(tag.OrdType, "1")          // OrdType - 1 for Market
 
-	// Convert quantity to decimal for precise string formatting
-	decQuantity := decimal.NewFromFloat(params.Quantity)
-	// Format with 8 decimal places but trim trailing zeros
-	quantityStr := decQuantity.StringFixed(8)
+	// Prepare quantity string based on step size
+	var quantityStr string
+
+	// Check if stepSize is 1 (or close to 1), which indicates whole number requirement
+	if params.StepSize >= 0.99 && params.StepSize <= 1.01 {
+		// Format as integer (whole number)
+		qty := math.Floor(params.Quantity)              // Ensure it's a whole number
+		quantityStr = strconv.FormatInt(int64(qty), 10) // Format as integer without decimal places
+		log.Printf("[FIX] Using integer format for quantity: %s (stepSize=%f)", quantityStr, params.StepSize)
+	} else {
+		// Use decimal format with precision based on step size
+		decQuantity := decimal.NewFromFloat(params.Quantity)
+		// Format with 8 decimal places but trim trailing zeros
+		quantityStr = decQuantity.StringFixed(8)
+		log.Printf("[FIX] Using decimal format for quantity: %s", quantityStr)
+	}
 
 	// В зависимости от типа ордера, устанавливаем либо OrderQty, либо QuoteOrderQty
 	if params.IsQuoteOrderQty {
@@ -282,8 +304,8 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 					// Ждем немного перед повторной попыткой
 					time.Sleep(500 * time.Millisecond)
 
-					// Рекурсивно вызываем sendMarketOrder с обновленными параметрами
-					return e.sendMarketOrder(params, orderType)
+					// Рекурсивно вызываем SendMarketOrder с обновленными параметрами
+					return e.SendMarketOrder(params, orderType)
 				}
 
 				// Если попытки закончились, возвращаем ошибку
