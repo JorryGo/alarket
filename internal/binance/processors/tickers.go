@@ -8,11 +8,12 @@ import (
 )
 
 type SymbolTree struct {
-	SymbolName string
-	Symbol     *binance.Symbol
-	LotMinQty  float64
-	From       *SymbolTree
-	To         *map[string]*SymbolTree
+	SymbolName  string
+	Symbol      *binance.Symbol
+	LotMinQty   float64
+	LotStepSize float64
+	From        *SymbolTree
+	To          *map[string]*SymbolTree
 }
 
 func GetTickersForMap() (*map[string]*SymbolTree, error) {
@@ -65,12 +66,14 @@ func findLoops(symbols []*binance.Symbol, from *SymbolTree, symbolToFind []strin
 		}
 
 		minLotQty, _ := strconv.ParseFloat(symbol.LotSizeFilter().MinQuantity, 64)
+		lotStepSize, _ := strconv.ParseFloat(symbol.LotSizeFilter().StepSize, 64)
 
 		st := &SymbolTree{
-			SymbolName: symbol.Symbol,
-			Symbol:     symbol,
-			LotMinQty:  minLotQty,
-			From:       from,
+			SymbolName:  symbol.Symbol,
+			Symbol:      symbol,
+			LotMinQty:   minLotQty,
+			LotStepSize: lotStepSize,
+			From:        from,
 		}
 
 		st.To = findLoops(symbols, st, []string{symbol.QuoteAsset, symbol.BaseAsset}, deep)

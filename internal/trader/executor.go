@@ -295,6 +295,8 @@ func (e *Executor) sendMarketOrder(params MarketOrderParams, orderType string) (
 				return report, fmt.Errorf("order was %s", report.OrdStatus)
 			}
 
+			return report, fmt.Errorf("unknown condition")
+
 		case <-timeout:
 			// Clean up on timeout
 			cleanupResources()

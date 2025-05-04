@@ -50,46 +50,47 @@ type Trader struct {
 }
 
 // adjustQuantityToLotSize adjusts the quantity to meet the minimum lot size requirement
-// and ensures it's a valid multiple of the lot size
-func (t *Trader) adjustQuantityToLotSize(symbol string, quantity float64) float64 {
-	// Find the symbol in the trading tree
-	symbolTree, ok := t.tradingTree[symbol]
-	if !ok {
-		// If symbol not found, return the original quantity
-		fmt.Printf("Symbol %s not found in trading tree, using original quantity\n", symbol)
+// and ensures it's a valid multiple of the step size
+func (t *Trader) adjustQuantityToLotSize(symbolTree *processors.SymbolTree, quantity float64) float64 {
+	if symbolTree == nil {
+		// If symbol node is nil, return the original quantity
 		return quantity
 	}
 
-	// Get the minimum lot size
+	// Get the minimum lot size and step size
 	minLotSize := symbolTree.LotMinQty
-	if minLotSize <= 0 {
-		// If minimum lot size is invalid, return the original quantity
-		fmt.Printf("Invalid minimum lot size for %s: %f, using original quantity\n", symbol, minLotSize)
+	stepSize := symbolTree.LotStepSize
+
+	if minLotSize <= 0 || stepSize <= 0 {
+		// If minimum lot size or step size is invalid, return the original quantity
+		fmt.Printf("Invalid minimum lot size or step size for %s: min=%f, step=%f, using original quantity\n",
+			symbolTree.SymbolName, minLotSize, stepSize)
 		return quantity
 	}
 
 	// Convert to decimal for precise calculations
 	decQuantity := decimal.NewFromFloat(quantity)
 	decMinLotSize := decimal.NewFromFloat(minLotSize)
+	decStepSize := decimal.NewFromFloat(stepSize)
 
-	// Adjust quantity to be a multiple of the minimum lot size
-	// First, ensure it's at least the minimum lot size
+	// Ensure quantity is at least the minimum lot size
 	if decQuantity.LessThan(decMinLotSize) {
-		fmt.Printf("Adjusting quantity from %f to minimum lot size %f for %s\n", quantity, minLotSize, symbol)
+		fmt.Printf("Adjusting quantity from %f to minimum lot size %f for %s\n",
+			quantity, minLotSize, symbolTree.SymbolName)
 		return minLotSize
 	}
 
-	// Calculate how many complete lot sizes fit into the quantity
-	// Use integer division to get the floor value
-	lotSizeMultiple := decQuantity.Div(decMinLotSize).Floor()
-	adjustedQuantity := lotSizeMultiple.Mul(decMinLotSize)
+	// Calculate how many complete step sizes fit into the quantity (floor division)
+	// This ensures the quantity is a valid multiple of the step size
+	steps := decQuantity.Div(decStepSize).Floor()
+	adjustedQuantity := steps.Mul(decStepSize)
 
 	// Convert back to float64 for return
 	adjustedFloat, _ := adjustedQuantity.Float64()
 
 	if adjustedFloat != quantity {
-		fmt.Printf("Adjusting quantity from %f to %f for %s (lot size: %f)\n",
-			quantity, adjustedFloat, symbol, minLotSize)
+		fmt.Printf("Adjusting quantity from %f to %f for %s (step size: %f)\n",
+			quantity, adjustedFloat, symbolTree.SymbolName, stepSize)
 	}
 
 	return adjustedFloat
@@ -207,14 +208,14 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 	// Check if USDT is in BaseAsset or QuoteAsset position
 	if node.Symbol.BaseAsset == "USDT" {
 		// Если USDT является базовым активом, мы продаем USDT за квотируемый актив
-		adjustedQuantity := t.adjustQuantityToLotSize(firstSymbol, currentUSDT)
+		adjustedQuantity := t.adjustQuantityToLotSize(node, currentUSDT)
 		initialUSDT = adjustedQuantity
-		fmt.Printf("Executing first trade: %s, selling %.2f USDT\n", firstSymbol, adjustedQuantity)
+		fmt.Printf("Executing first trade: %s, selling %.8f USDT\n", firstSymbol, adjustedQuantity)
 		firstReport, err = t.executor.SellMarket(firstSymbol, adjustedQuantity)
 	} else {
 		// Если USDT является квотируемым активом, мы покупаем базовый актив за USDT
 		// Здесь используем quoteOrderQty - указываем сколько USDT мы хотим потратить
-		fmt.Printf("Executing first trade: %s, buying base asset with %.2f USDT\n", firstSymbol, currentUSDT)
+		fmt.Printf("Executing first trade: %s, buying base asset with %.8f USDT\n", firstSymbol, currentUSDT)
 		firstReport, err = t.executor.BuyMarketQuote(firstSymbol, currentUSDT)
 	}
 
@@ -242,20 +243,22 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 	fmt.Printf("First trade executed: Got %.8f %s\n", currentAmount, ownerOfCoin)
 
 	// Second trade: Use the asset we got from the first trade
-	fmt.Printf("Executing second trade: %s\n", secondNode.SymbolName)
+	secondSymbol := secondNode.SymbolName
+	fmt.Printf("Executing second trade: %s\n", secondSymbol)
 	var secondReport ExecutionReport
 
 	// Determine if we need to buy or sell based on the symbol and what we own
 	if secondNode.Symbol.BaseAsset == ownerOfCoin {
 		// Мы владеем базовым активом, поэтому продаем его
-		fmt.Printf("Selling %.8f %s\n", currentAmount, ownerOfCoin)
-		secondReport, err = t.executor.SellMarket(secondNode.SymbolName, currentAmount)
+		adjustedAmount := t.adjustQuantityToLotSize(secondNode, currentAmount)
+		fmt.Printf("Selling %.8f %s (adjusted from %.8f)\n", adjustedAmount, ownerOfCoin, currentAmount)
+		secondReport, err = t.executor.SellMarket(secondSymbol, adjustedAmount)
 		// После продажи определим, что мы получили, в обработке ниже
 	} else {
 		// Мы владеем квотируемым активом, поэтому покупаем базовый актив
 		// Используем всё количество квотируемого актива, которое у нас есть
 		fmt.Printf("Buying base asset with %.8f %s\n", currentAmount, ownerOfCoin)
-		secondReport, err = t.executor.BuyMarketQuote(secondNode.SymbolName, currentAmount)
+		secondReport, err = t.executor.BuyMarketQuote(secondSymbol, currentAmount)
 		// После покупки определим, что мы получили, в обработке ниже
 	}
 
@@ -277,20 +280,22 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 	fmt.Printf("Second trade executed: Got %.8f %s\n", currentAmount, ownerOfCoin)
 
 	// Third trade: Complete the chain and return to the initial coin (USDT)
-	fmt.Printf("Executing third trade: %s\n", lastNode.SymbolName)
+	thirdSymbol := lastNode.SymbolName
+	fmt.Printf("Executing third trade: %s\n", thirdSymbol)
 	var thirdReport ExecutionReport
 
 	// Determine if we need to buy or sell based on the symbol and what we own
 	if lastNode.Symbol.BaseAsset == ownerOfCoin {
 		// Мы владеем базовым активом, поэтому продаем его
-		fmt.Printf("Selling %.8f %s\n", currentAmount, ownerOfCoin)
-		thirdReport, err = t.executor.SellMarket(lastNode.SymbolName, currentAmount)
+		adjustedAmount := t.adjustQuantityToLotSize(lastNode, currentAmount)
+		fmt.Printf("Selling %.8f %s (adjusted from %.8f)\n", adjustedAmount, ownerOfCoin, currentAmount)
+		thirdReport, err = t.executor.SellMarket(thirdSymbol, adjustedAmount)
 		// После продажи определим, что мы получили, в обработке ниже
 	} else {
 		// Мы владеем квотируемым активом, поэтому покупаем базовый актив
 		// Используем всё количество квотируемого актива, которое у нас есть
 		fmt.Printf("Buying base asset with %.8f %s\n", currentAmount, ownerOfCoin)
-		thirdReport, err = t.executor.BuyMarketQuote(lastNode.SymbolName, currentAmount)
+		thirdReport, err = t.executor.BuyMarketQuote(thirdSymbol, currentAmount)
 		// После покупки определим, что мы получили, в обработке ниже
 	}
 
