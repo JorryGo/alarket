@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,11 +23,8 @@ import (
 
 // Константы для конфигурации
 const (
-	DEFAULT_RETRY_COUNT = 3 // Дефолтное количество повторных попыток (всего будет 3 попытки: 1 начальная + 2 повторных)
+	DefaultRetryCount = 3 // Дефолтное количество повторных попыток (всего будет 3 попытки: 1 начальная + 2 повторных)
 )
-
-//const apiKey = "ntCyqh0qiuEGtg9jH4EOtIoeSv8ETOjiHdeHjs0zNgwpckL5flXpigOIT5teYmzv"
-//const secretKey = "0x26WvMtZietFtv5nGvqQnM2WrIlXTSzQGiCWej045lus55OKo5bemF1HHPQ3Vtn"
 
 type Executor struct {
 	client    *binanceExecutor
@@ -34,8 +32,8 @@ type Executor struct {
 }
 
 func InitExecutor() *Executor {
-	// Open settings file
-	settingsFile, err := os.Open("FIXAssets\\settings.ini")
+	// Open settings file - using filepath.Join for cross-platform compatibility
+	settingsFile, err := os.Open(filepath.Join("FIXAssets", "settings.ini"))
 	if err != nil {
 		log.Printf("[FIX] Error opening settings file: %v", err)
 		return &Executor{}
@@ -49,8 +47,8 @@ func InitExecutor() *Executor {
 		return &Executor{}
 	}
 
-	// Load private key
-	privateKey, err := loadEd25519Key("FIXAssets\\pkey.pem")
+	// Load private key - using filepath.Join for cross-platform compatibility
+	privateKey, err := loadEd25519Key(filepath.Join("FIXAssets", "pkey.pem"))
 	if err != nil {
 		log.Printf("[FIX] Error loading private key: %v", err)
 		return &Executor{}
@@ -65,8 +63,25 @@ func InitExecutor() *Executor {
 		isAuthenticated: false,
 	}
 
-	// Create initiator
-	initiator, err := quickfix.NewInitiator(client, quickfix.NewMemoryStoreFactory(), settings, quickfix.NewScreenLogFactory())
+	// Get log directory from settings
+	logDir, err := settings.GlobalSettings().Setting("FileLogPath")
+	if err != nil {
+		// Если директория логов не указана в настройках, кидаем панику
+		panic("LogDirectory not specified in FIX settings")
+	}
+
+	// Create log directory if it doesn't exist
+	if err = os.MkdirAll(logDir, 0755); err != nil {
+		log.Printf("[FIX] Error creating log directory: %v", err)
+	}
+
+	// Create initiator with FileLogFactory instead of ScreenLogFactory
+	logFactory, err := quickfix.NewFileLogFactory(settings)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create FIX log factory: %v", err))
+	}
+
+	initiator, err := quickfix.NewInitiator(client, quickfix.NewMemoryStoreFactory(), settings, logFactory)
 	if err != nil {
 		log.Printf("[FIX] Error creating initiator: %v", err)
 		return &Executor{
@@ -107,7 +122,7 @@ func (e *Executor) BuyMarket(symbol string, quantity float64) (ExecutionReport, 
 		Quantity:        quantity,
 		Side:            "1",   // Buy
 		IsQuoteOrderQty: false, // Обычный ордер на количество базового актива
-		RetryCount:      DEFAULT_RETRY_COUNT,
+		RetryCount:      DefaultRetryCount,
 		StepSize:        0, // Default stepSize
 	}
 	return e.SendMarketOrder(params, "buy")
@@ -121,7 +136,7 @@ func (e *Executor) SellMarket(symbol string, quantity float64) (ExecutionReport,
 		Quantity:        quantity,
 		Side:            "2",   // Sell
 		IsQuoteOrderQty: false, // Обычный ордер на количество базового актива
-		RetryCount:      DEFAULT_RETRY_COUNT,
+		RetryCount:      DefaultRetryCount,
 		StepSize:        0, // Default stepSize
 	}
 	return e.SendMarketOrder(params, "sell")
@@ -135,7 +150,7 @@ func (e *Executor) BuyMarketQuote(symbol string, quoteQuantity float64) (Executi
 		Quantity:        quoteQuantity,
 		Side:            "1",  // Buy
 		IsQuoteOrderQty: true, // Ордер на сумму квотируемого актива
-		RetryCount:      DEFAULT_RETRY_COUNT,
+		RetryCount:      DefaultRetryCount,
 		StepSize:        0, // Default stepSize
 	}
 	return e.SendMarketOrder(params, "buy")
@@ -149,7 +164,7 @@ func (e *Executor) SellMarketQuote(symbol string, quoteQuantity float64) (Execut
 		Quantity:        quoteQuantity,
 		Side:            "2",  // Sell
 		IsQuoteOrderQty: true, // Ордер на сумму квотируемого актива
-		RetryCount:      DEFAULT_RETRY_COUNT,
+		RetryCount:      DefaultRetryCount,
 		StepSize:        0, // Default stepSize
 	}
 	return e.SendMarketOrder(params, "sell")
@@ -195,21 +210,28 @@ func (e *Executor) SendMarketOrder(params MarketOrderParams, orderType string) (
 	msg.Body.SetString(tag.Side, params.Side)     // Side - 1 for Buy, 2 for Sell
 	msg.Body.SetString(tag.OrdType, "1")          // OrdType - 1 for Market
 
-	// Prepare quantity string based on step size
+	// Prepare quantity string based on order type and step size
 	var quantityStr string
-
-	// Check if stepSize is 1 (or close to 1), which indicates whole number requirement
-	if params.StepSize >= 0.99 && params.StepSize <= 1.01 {
-		// Format as integer (whole number)
-		qty := math.Floor(params.Quantity)              // Ensure it's a whole number
-		quantityStr = strconv.FormatInt(int64(qty), 10) // Format as integer without decimal places
-		log.Printf("[FIX] Using integer format for quantity: %s (stepSize=%f)", quantityStr, params.StepSize)
-	} else {
-		// Use decimal format with precision based on step size
+	if params.IsQuoteOrderQty {
+		// For quote orders (CashOrderQty), never apply stepSize rounding
+		// Just format with 8 decimal places but trim trailing zeros
 		decQuantity := decimal.NewFromFloat(params.Quantity)
-		// Format with 8 decimal places but trim trailing zeros
-		quantityStr = decQuantity.StringFixed(8)
-		log.Printf("[FIX] Using decimal format for quantity: %s", quantityStr)
+		quantityStr = decQuantity.StringFixedBank(8)
+		log.Printf("[FIX] Using quote format for CashOrderQty: %s", quantityStr)
+	} else {
+		// For base asset orders (OrderQty), apply stepSize logic
+		if params.StepSize >= 0.99 && params.StepSize <= 1.01 {
+			// Format as integer (whole number)
+			qty := math.Floor(params.Quantity)              // Ensure it's a whole number
+			quantityStr = strconv.FormatInt(int64(qty), 10) // Format as integer without decimal places
+			log.Printf("[FIX] Using integer format for quantity: %s (stepSize=%f)", quantityStr, params.StepSize)
+		} else {
+			// Use decimal format with precision based on step size
+			decQuantity := decimal.NewFromFloat(params.Quantity)
+			// Format with 8 decimal places but trim trailing zeros
+			quantityStr = decQuantity.StringFixed(8)
+			log.Printf("[FIX] Using decimal format for quantity: %s", quantityStr)
+		}
 	}
 
 	// В зависимости от типа ордера, устанавливаем либо OrderQty, либо QuoteOrderQty
@@ -293,8 +315,8 @@ func (e *Executor) SendMarketOrder(params MarketOrderParams, orderType string) (
 					params.RetryCount--
 
 					// Выводим информацию о повторной попытке
-					retryNumber := DEFAULT_RETRY_COUNT - params.RetryCount
-					totalAttempts := DEFAULT_RETRY_COUNT + 1 // +1 потому что начальная попытка тоже считается
+					retryNumber := DefaultRetryCount - params.RetryCount
+					totalAttempts := DefaultRetryCount + 1 // +1 потому что начальная попытка тоже считается
 					fmt.Printf("Order %s rejected (status 8), retrying attempt %d/%d...\n",
 						clOrdID, retryNumber, totalAttempts)
 
@@ -415,13 +437,13 @@ func (e *binanceExecutor) OnLogout(sessionID quickfix.SessionID) {
 }
 func (e *binanceExecutor) FromAdmin(msg *quickfix.Message, _ quickfix.SessionID) quickfix.MessageRejectError {
 	msgType, _ := msg.MsgType()
-	log.Printf("[FIX] inbound %s: %s", msgType, msg.String())
+	log.Printf("[FIX] fromAdmin %s: %s", msgType, msg.String())
 	return nil
 }
 func (e *binanceExecutor) ToApp(_ *quickfix.Message, _ quickfix.SessionID) error { return nil }
 func (e *binanceExecutor) FromApp(m *quickfix.Message, _ quickfix.SessionID) quickfix.MessageRejectError {
 	msgType, _ := m.MsgType()
-	log.Printf("[FIX] inbound %s: %s", msgType, m.String())
+	// log.Printf("[FIX] inbound %s: %s", msgType, m.String())
 
 	// Check if this is an execution report
 	if msgType == "8" { // ExecutionReport

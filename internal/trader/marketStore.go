@@ -218,7 +218,7 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 			Quantity:        adjustedQuantity,
 			Side:            "2", // Sell
 			IsQuoteOrderQty: false,
-			RetryCount:      DEFAULT_RETRY_COUNT,
+			RetryCount:      DefaultRetryCount,
 			StepSize:        node.LotStepSize,
 		}
 		firstReport, err = t.executor.SendMarketOrder(params, "sell")
@@ -233,7 +233,7 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 			Quantity:        currentUSDT,
 			Side:            "1", // Buy
 			IsQuoteOrderQty: true,
-			RetryCount:      DEFAULT_RETRY_COUNT,
+			RetryCount:      DefaultRetryCount,
 			StepSize:        node.LotStepSize,
 		}
 		firstReport, err = t.executor.SendMarketOrder(params, "buy")
@@ -279,7 +279,7 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 			Quantity:        adjustedAmount,
 			Side:            "2", // Sell
 			IsQuoteOrderQty: false,
-			RetryCount:      DEFAULT_RETRY_COUNT,
+			RetryCount:      DefaultRetryCount,
 			StepSize:        secondNode.LotStepSize,
 		}
 		secondReport, err = t.executor.SendMarketOrder(params, "sell")
@@ -295,7 +295,7 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 			Quantity:        currentAmount,
 			Side:            "1", // Buy
 			IsQuoteOrderQty: true,
-			RetryCount:      DEFAULT_RETRY_COUNT,
+			RetryCount:      DefaultRetryCount,
 			StepSize:        secondNode.LotStepSize,
 		}
 		secondReport, err = t.executor.SendMarketOrder(params, "buy")
@@ -304,7 +304,6 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 
 	if err != nil {
 		fmt.Printf("Error executing second trade: %v\n", err)
-		t.executor.Close()
 		return false
 	}
 
@@ -336,7 +335,7 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 			Quantity:        adjustedAmount,
 			Side:            "2", // Sell
 			IsQuoteOrderQty: false,
-			RetryCount:      DEFAULT_RETRY_COUNT,
+			RetryCount:      DefaultRetryCount,
 			StepSize:        lastNode.LotStepSize,
 		}
 		thirdReport, err = t.executor.SendMarketOrder(params, "sell")
@@ -352,7 +351,7 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 			Quantity:        currentAmount,
 			Side:            "1", // Buy
 			IsQuoteOrderQty: true,
-			RetryCount:      DEFAULT_RETRY_COUNT,
+			RetryCount:      DefaultRetryCount,
 			StepSize:        lastNode.LotStepSize,
 		}
 		thirdReport, err = t.executor.SendMarketOrder(params, "buy")
@@ -361,8 +360,7 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 
 	if err != nil {
 		fmt.Printf("Error executing third trade: %v\n", err)
-		t.executor.Close()
-		panic(err)
+		return false
 	}
 
 	// Определяем, какой актив мы получили и его количество
@@ -378,7 +376,7 @@ func (t *Trader) executeTrades(path string, node *processors.SymbolTree, secondN
 
 	// Check if we've returned to the initial coin (USDT)
 	if ownerOfCoin == "USDT" {
-		fmt.Printf("Successfully completed trading chain, returned to USDT with %.8f\n", currentAmount)
+		fmt.Printf("Successfully completed trading chain, returned to USDT with %.8f, diff %f\n", currentAmount, currentUSDT-initialUSDT)
 	} else {
 		fmt.Printf("Warning: Trading chain did not return to USDT, ended with %.8f %s\n", currentAmount, ownerOfCoin)
 	}

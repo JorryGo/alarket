@@ -38,12 +38,20 @@ func main() {
 	//}
 	//fmt.Println(order)
 
+	//for {
+	//	do, _ := client.NewGetAccountService().Do(context.Background())
+	//
+	//	fmt.Println(do.Balances[4])
+	//
+	//	time.Sleep(time.Second * 2)
+	//}
+
 	do, err := client.NewGetAccountService().Do(context.Background())
 	if err != nil {
 		return
 	}
 
-	fmt.Println(do)
+	fmt.Println(do.AccountType)
 
 	executor := trader2.InitExecutor()
 
@@ -80,16 +88,18 @@ func main() {
 		log.Warn().Err(err)
 	}
 
-	ticker := time.NewTicker(time.Second / 10)
-	for range ticker.C {
-		for symbol, val := range *tree {
-			if val.Symbol.BaseAsset != "USDT" && val.Symbol.QuoteAsset != "USDT" {
-				continue
-			}
+	go func() {
+		for {
+			for symbol, val := range *tree {
+				if val.Symbol.BaseAsset != "USDT" && val.Symbol.QuoteAsset != "USDT" {
+					continue
+				}
 
-			trader.CheckLoopDiffs(symbol)
+				trader.CheckLoopDiffs(symbol)
+			}
+			time.Sleep(time.Millisecond * 10)
 		}
-	}
+	}()
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, os.Kill, syscall.SIGTERM)
