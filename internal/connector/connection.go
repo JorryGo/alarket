@@ -1,7 +1,6 @@
 package connector
 
 import (
-	"alarket/internal/trader"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +36,7 @@ func (c *connection) addSubs(tickers []string) error {
 	}
 
 	for _, ticker := range tickers {
-		subRequest.Params = append(subRequest.Params, strings.ToLower(ticker)+`@bookTicker`)
+		subRequest.Params = append(subRequest.Params, strings.ToLower(ticker)+`@trade`)
 	}
 
 	err := c.conn.WriteJSON(subRequest)
@@ -60,7 +59,7 @@ func (c *connection) getSubs() []string {
 	return c.subs
 }
 
-func (c *connection) runHandler(handler func([]byte, *trader.Trader), trader *trader.Trader) {
+func (c *connection) runHandler(handler func([]byte)) {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
@@ -75,6 +74,6 @@ func (c *connection) runHandler(handler func([]byte, *trader.Trader), trader *tr
 			break
 		}
 
-		go handler(message, trader)
+		go handler(message)
 	}
 }

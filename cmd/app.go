@@ -4,7 +4,6 @@ import (
 	internalBinance "alarket/internal/binance"
 	"alarket/internal/binance/processors"
 	"alarket/internal/connector"
-	trader2 "alarket/internal/trader"
 	"context"
 	"fmt"
 	"os"
@@ -53,17 +52,6 @@ func main() {
 
 	fmt.Println(do.AccountType)
 
-	executor := trader2.InitExecutor()
-
-	for {
-		if executor.IsConnected() {
-			fmt.Println(`executor connected`)
-			break
-		}
-
-		time.Sleep(time.Millisecond * 10)
-	}
-
 	tree, err := processors.GetTickersForMap()
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error getting tickers")
@@ -76,10 +64,7 @@ func main() {
 		tickersToAdd = append(tickersToAdd, key)
 	}
 
-	trader := trader2.InitTrader(tree, executor)
-
-	//connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle, trader)
-	connInstance := connector.New(`wss://stream.testnet.binance.vision/ws`, internalBinance.Handle, trader)
+	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle)
 	connInstance.Run()
 
 	err = connInstance.SubscribeStreams(tickersToAdd)
@@ -87,19 +72,6 @@ func main() {
 	if err != nil {
 		log.Warn().Err(err)
 	}
-
-	go func() {
-		for {
-			for symbol, val := range *tree {
-				if val.Symbol.BaseAsset != "USDT" && val.Symbol.QuoteAsset != "USDT" {
-					continue
-				}
-
-				trader.CheckLoopDiffs(symbol)
-			}
-			time.Sleep(time.Millisecond * 10)
-		}
-	}()
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, os.Kill, syscall.SIGTERM)
@@ -109,7 +81,6 @@ func main() {
 		sig := <-sigs
 		fmt.Println("EXIT", sig)
 		connInstance.ClosePool()
-		executor.Close()
 		done <- true
 	}()
 

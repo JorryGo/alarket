@@ -2,7 +2,6 @@ package binance
 
 import (
 	"alarket/internal/binance/events"
-	"alarket/internal/trader"
 	"encoding/json"
 
 	"github.com/bitly/go-simplejson"
@@ -11,7 +10,7 @@ import (
 )
 
 // Handle processes WebSocket messages and routes them to appropriate event handlers
-func Handle(message []byte, trader *trader.Trader) {
+func Handle(message []byte) {
 	j, err := simplejson.NewJson(message)
 	if err != nil {
 		log.Warn().Err(err)
@@ -19,7 +18,7 @@ func Handle(message []byte, trader *trader.Trader) {
 	}
 
 	if _, ok := j.CheckGet(`e`); !ok {
-		handleBookTicker(message, trader)
+		handleBookTicker(message)
 		return
 	}
 
@@ -34,14 +33,14 @@ func Handle(message []byte, trader *trader.Trader) {
 			log.Warn().Err(err)
 			return
 		}
-		event.Handle(trader)
+		event.Handle()
 		return
 	}
 
 	log.Warn().Msgf(`Unhandled message %s`, message)
 }
 
-func handleBookTicker(message []byte, trader *trader.Trader) {
+func handleBookTicker(message []byte) {
 	event := new(events.BookTickerEvent)
 	err := json.Unmarshal(message, event)
 	if err != nil {
@@ -49,5 +48,5 @@ func handleBookTicker(message []byte, trader *trader.Trader) {
 		return
 	}
 
-	event.Handle(trader)
+	event.Handle()
 }

@@ -1,7 +1,6 @@
 package connector
 
 import (
-	"alarket/internal/trader"
 	"sync"
 	"time"
 
@@ -12,20 +11,18 @@ import (
 type Connector struct {
 	url               string
 	connectionPool    []*connection
-	messageHandler    func([]byte, *trader.Trader)
-	trader            *trader.Trader
+	messageHandler    func([]byte)
 	maxStreamsPerConn int
 	maxSubsPerRequest int
 	mux               sync.Mutex
 }
 
-func New(uri string, handler func([]byte, *trader.Trader), trader *trader.Trader) *Connector {
+func New(uri string, handler func([]byte)) *Connector {
 	return &Connector{
 		url:               uri,
 		maxStreamsPerConn: 1022,
 		maxSubsPerRequest: 100,
 		messageHandler:    handler,
-		trader:            trader,
 	}
 }
 
@@ -103,7 +100,7 @@ func (c *Connector) makeNewConnection() {
 		id:        time.Now().UnixNano(),
 	}
 
-	go newConn.runHandler(c.messageHandler, c.trader)
+	go newConn.runHandler(c.messageHandler)
 	go c.handleConnection(newConn)
 
 	c.connectionPool = append(c.connectionPool, newConn)
