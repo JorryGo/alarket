@@ -16,7 +16,7 @@ type SymbolTree struct {
 	To          *map[string]*SymbolTree
 }
 
-func GetTickersForMap() (*map[string]*SymbolTree, error) {
+func GetTickers() ([]*binance.Symbol, error) {
 	binanceClient := binance.NewClient(``, ``)
 	tickerList, err := binanceClient.NewExchangeInfoService().Do(context.Background())
 
@@ -29,13 +29,21 @@ func GetTickersForMap() (*map[string]*SymbolTree, error) {
 
 	for _, ticker := range tickerList.Symbols {
 		internalTicker := ticker
-		isUsdcPair := ticker.BaseAsset == "USDC" || ticker.QuoteAsset == "USDC"
-		if ticker.Status == `TRADING` && !isUsdcPair {
+		if ticker.Status == `TRADING` {
 			res = append(res, &internalTicker)
 		}
 	}
 
-	return findLoops(res, nil, []string{}, 0), nil
+	return res, nil
+}
+
+func GetTickersForMap() (*map[string]*SymbolTree, error) {
+	tickers, err := GetTickers()
+	if err != nil {
+		return nil, err
+	}
+
+	return findLoops(tickers, nil, []string{}, 0), nil
 }
 
 func findLoops(symbols []*binance.Symbol, from *SymbolTree, symbolToFind []string, deep int) *map[string]*SymbolTree {

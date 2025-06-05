@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ type connection struct {
 	closeChan      chan struct{}
 	subs           []string
 	mux            sync.Mutex
+	ctx            context.Context
 }
 
 func (c *connection) close() {
@@ -63,7 +65,15 @@ func (c *connection) runHandler(handler func([]byte)) {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			log.Warn().Msgf("conn read error: %s", err)
+			// Check if this is due to graceful shutdown
+			select {
+			case <-c.ctx.Done():
+				// Graceful shutdown, don't log as warning
+				log.Debug().Msgf("Connection closed during shutdown")
+			default:
+				// Unexpected error
+				log.Warn().Msgf("conn read error: %s", err)
+			}
 
 			err = c.conn.Close()
 			if err != nil {

@@ -59,14 +59,13 @@ func (c *Service) WriteTradeEvent(event events.TradeEvent) {
 	err := c.conn.Exec(
 		context.Background(),
 		query,
-		event.Time,
 		event.Symbol,
-		event.TradeID,
+		event.Time,
 		event.Price,
 		event.Quantity,
 		event.BuyerOrderID,
 		event.SellerOrderID,
-		event.TradeTime,
+		event.TradeID,
 		event.IsBuyerMaker,
 		event.Placeholder,
 	)

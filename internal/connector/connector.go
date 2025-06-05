@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -15,14 +16,19 @@ type Connector struct {
 	maxStreamsPerConn int
 	maxSubsPerRequest int
 	mux               sync.Mutex
+	ctx               context.Context
+	cancel            context.CancelFunc
 }
 
 func New(uri string, handler func([]byte)) *Connector {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Connector{
 		url:               uri,
 		maxStreamsPerConn: 1022,
 		maxSubsPerRequest: 100,
 		messageHandler:    handler,
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 }
 
@@ -77,18 +83,28 @@ func (c *Connector) doSubscription(tickers []string) error {
 }
 
 func (c *Connector) ClosePool() {
+	c.cancel() // Signal graceful shutdown
 	for key := range c.connectionPool {
 		c.connectionPool[key].closeChan <- struct{}{}
 	}
 }
 
 func (c *Connector) makeNewConnection() {
+	// Check if shutdown was requested
+	select {
+	case <-c.ctx.Done():
+		log.Info().Msg("Shutdown requested, not creating new connection")
+		return
+	default:
+	}
+
 	log.Info().Msgf("connecting to %s", c.url)
 
 	conn, httpInfo, err := websocket.DefaultDialer.Dial(c.url, nil)
 	if err != nil {
 		log.Warn().Msgf("Connection error: %s", err)
-		c.makeNewConnection()
+		// Retry immediately in goroutine to avoid infinite recursion
+		go c.makeNewConnection()
 		return
 	}
 
@@ -98,6 +114,7 @@ func (c *Connector) makeNewConnection() {
 		conn:      conn,
 		closeChan: make(chan struct{}),
 		id:        time.Now().UnixNano(),
+		ctx:       c.ctx,
 	}
 
 	go newConn.runHandler(c.messageHandler)
@@ -122,15 +139,29 @@ func (c *Connector) handleConnection(conn *connection) {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-conn.closeChan:
-				log.Warn().Msgf(`Connection %d closed. Reconnect...`, conn.id)
+			case <-c.ctx.Done():
+				log.Info().Msgf(`Connection %d graceful shutdown`, conn.id)
 				c.removeConnection(conn)
-				err := c.SubscribeStreams(conn.getSubs())
-				if err != nil {
-					log.Err(err)
-				}
 				conn.close()
 				return
+			case <-conn.closeChan:
+				// Check if this is graceful shutdown
+				select {
+				case <-c.ctx.Done():
+					log.Info().Msgf(`Connection %d graceful shutdown`, conn.id)
+					c.removeConnection(conn)
+					conn.close()
+					return
+				default:
+					log.Warn().Msgf(`Connection %d unexpected disconnect. Reconnecting...`, conn.id)
+					c.removeConnection(conn)
+					err := c.SubscribeStreams(conn.getSubs())
+					if err != nil {
+						log.Err(err)
+					}
+					conn.close()
+					return
+				}
 			case <-ticker.C:
 				err := conn.conn.WriteMessage(websocket.PingMessage, []byte(``))
 				if err != nil {
