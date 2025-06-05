@@ -15,21 +15,23 @@ type Service struct {
 	conn driver.Conn
 }
 
-func NewService() (*Service, error) {
+func NewService(cfg *Config) (*Service, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr: []string{fmt.Sprintf("%s:%d", `localhost`, 123)},
+		Addr: []string{fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)},
 		Auth: clickhouse.Auth{
-			Database: "default",
-			Username: "default",
-			Password: "default",
+			Database: cfg.Database,
+			Username: cfg.Username,
+			Password: cfg.Password,
 		},
 		DialContext: func(ctx context.Context, addr string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "tcp", addr)
 		},
-		Debug: true,
+		Debug: cfg.Debug,
 		Debugf: func(format string, v ...interface{}) {
-			fmt.Printf(format, v)
+			if cfg.Debug {
+				fmt.Printf(format, v)
+			}
 		},
 		Settings: clickhouse.Settings{
 			"max_execution_time": 60,

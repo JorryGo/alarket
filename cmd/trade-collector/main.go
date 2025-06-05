@@ -3,6 +3,7 @@ package main
 import (
 	internalBinance "alarket/internal/binance"
 	"alarket/internal/binance/processors"
+	"alarket/internal/clickhouse"
 	"alarket/internal/config"
 	"alarket/internal/connector"
 	"os"
@@ -27,6 +28,15 @@ func main() {
 	}
 
 	binance.UseTestnet = cfg.Binance.UseTestnet
+
+	// Initialize ClickHouse service
+	clickhouseService, err := clickhouse.NewService(cfg.ClickHouse)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize ClickHouse service")
+	}
+
+	// Initialize Binance handler with ClickHouse service
+	internalBinance.SetClickHouseService(clickhouseService)
 
 	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle)
 	connInstance.Run()
