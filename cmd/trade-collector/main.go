@@ -3,40 +3,32 @@ package main
 import (
 	internalBinance "alarket/internal/binance"
 	"alarket/internal/binance/processors"
-	"alarket/internal/clickhouse"
 	"alarket/internal/config"
 	"alarket/internal/connector"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/adshao/go-binance/v2"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func main() {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.DateTime})
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
 
-	log.Info().Msg(`Trade Collector has started`)
+	slog.Info("Trade Collector has started")
 
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to load configuration")
+		slog.Error("Failed to load configuration", "error", err)
+		os.Exit(1)
 	}
 
 	binance.UseTestnet = cfg.Binance.UseTestnet
-
-	// Initialize ClickHouse service
-	clickhouseService, err := clickhouse.NewService(cfg.ClickHouse)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialize ClickHouse service")
-	}
-
-	// Initialize Binance handler with ClickHouse service
-	internalBinance.SetClickHouseService(clickhouseService)
 
 	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle)
 	connInstance.Run()
@@ -45,10 +37,11 @@ func main() {
 
 	err = connInstance.SubscribeStreams(tickersToAdd)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to subscribe to streams")
+		slog.Error("Failed to subscribe to streams", "error", err)
+		os.Exit(1)
 	}
 
-	log.Info().Int("ticker_count", len(tickersToAdd)).Msg("Successfully subscribed to ticker streams")
+	slog.Info("Successfully subscribed to ticker streams", "ticker_count", len(tickersToAdd))
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, os.Kill, syscall.SIGTERM)
@@ -56,13 +49,13 @@ func main() {
 
 	go func() {
 		sig := <-sigs
-		log.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
+		slog.Info("Received shutdown signal", "signal", sig.String())
 		connInstance.ClosePool()
 		done <- true
 	}()
 
 	<-done
-	log.Info().Msg("Trade Collector stopped")
+	slog.Info("Trade Collector stopped")
 
 }
 
@@ -70,7 +63,8 @@ func getTickers() []string {
 	tickers, err := processors.GetTickers()
 
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to get tickers")
+		slog.Error("Failed to get tickers", "error", err)
+		os.Exit(1)
 	}
 
 	var result []string

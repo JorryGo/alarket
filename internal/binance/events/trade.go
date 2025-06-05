@@ -2,10 +2,10 @@ package events
 
 import (
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/adshao/go-binance/v2"
-	"github.com/rs/zerolog/log"
 )
 
 type TradeEvent struct {
@@ -20,9 +20,9 @@ type BookTickerEvent struct {
 func (e *TradeEvent) Handle() {
 	//log.Info().Msgf(`Received trade event for %s`, e.Symbol)
 
-	price, err := strconv.ParseFloat(e.Price, 64)
+	_, err := strconv.ParseFloat(e.Price, 64)
 	if err != nil {
-		log.Error().Err(err).Msgf("Failed to parse price for %s, %f", e.Symbol, price)
+		slog.Error("Failed to parse price", "symbol", e.Symbol, "price_string", e.Price, "error", err)
 		return
 	}
 

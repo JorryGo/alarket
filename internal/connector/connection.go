@@ -2,12 +2,12 @@ package connector
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog/log"
 )
 
 type connection struct {
@@ -23,11 +23,11 @@ type connection struct {
 func (c *connection) close() {
 	err := c.conn.Close()
 	if err != nil {
-		log.Err(err)
+		slog.Error("Failed to close connection", "error", err)
 		return
 	}
 
-	log.Info().Msgf(`Connection was successfully closed`)
+	slog.Info("Connection was successfully closed")
 }
 
 func (c *connection) addSubs(tickers []string) error {
@@ -49,7 +49,7 @@ func (c *connection) addSubs(tickers []string) error {
 	c.mux.Lock()
 	c.subs = append(c.subs, tickers...)
 	c.mux.Unlock()
-	log.Info().Msgf(`Succesfully subscribed %v`, tickers)
+	slog.Info("Successfully subscribed to tickers", "tickers", tickers)
 
 	return nil
 }
@@ -69,15 +69,15 @@ func (c *connection) runHandler(handler func([]byte)) {
 			select {
 			case <-c.ctx.Done():
 				// Graceful shutdown, don't log as warning
-				log.Debug().Msgf("Connection closed during shutdown")
+				slog.Debug("Connection closed during shutdown")
 			default:
 				// Unexpected error
-				log.Warn().Msgf("conn read error: %s", err)
+				slog.Warn("Connection read error", "error", err)
 			}
 
 			err = c.conn.Close()
 			if err != nil {
-				log.Warn().Err(err)
+				slog.Warn("Failed to close connection after read error", "error", err)
 			}
 
 			c.closeChan <- struct{}{}

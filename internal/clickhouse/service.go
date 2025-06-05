@@ -4,11 +4,12 @@ import (
 	"alarket/internal/binance/events"
 	"context"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/rs/zerolog/log"
+	"log/slog"
 	"net"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 type Service struct {
@@ -73,7 +74,7 @@ func (c *Service) WriteTradeEvent(event events.TradeEvent) {
 	)
 
 	if err != nil {
-		log.Err(err)
+		slog.Error("Failed to write trade event to ClickHouse", "error", err)
 	}
 
 }

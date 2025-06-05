@@ -2,9 +2,10 @@ package processors
 
 import (
 	"context"
-	"github.com/adshao/go-binance/v2"
-	"github.com/rs/zerolog/log"
+	"log/slog"
 	"strconv"
+
+	"github.com/adshao/go-binance/v2"
 )
 
 type SymbolTree struct {
@@ -21,7 +22,7 @@ func GetTickers() ([]*binance.Symbol, error) {
 	tickerList, err := binanceClient.NewExchangeInfoService().Do(context.Background())
 
 	if err != nil || tickerList == nil {
-		log.Fatal().Err(err)
+		slog.Error("Failed to get exchange info", "error", err)
 		return nil, err
 	}
 
