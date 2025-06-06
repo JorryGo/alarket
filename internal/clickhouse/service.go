@@ -13,10 +13,11 @@ import (
 )
 
 type Service struct {
-	conn driver.Conn
+	conn   driver.Conn
+	logger *slog.Logger
 }
 
-func NewService(cfg *Config) (*Service, error) {
+func NewService(cfg *Config, logger *slog.Logger) (*Service, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)},
 		Auth: clickhouse.Auth{
@@ -52,7 +53,8 @@ func NewService(cfg *Config) (*Service, error) {
 	}
 
 	return &Service{
-		conn: conn,
+		conn:   conn,
+		logger: logger,
 	}, nil
 }
 
@@ -74,7 +76,7 @@ func (c *Service) WriteTradeEvent(event events.TradeEvent) {
 	)
 
 	if err != nil {
-		slog.Error("Failed to write trade event to ClickHouse", "error", err)
+		c.logger.Error("Failed to write trade event to ClickHouse", "error", err)
 	}
 
 }

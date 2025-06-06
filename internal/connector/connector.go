@@ -18,9 +18,10 @@ type Connector struct {
 	mux               sync.Mutex
 	ctx               context.Context
 	cancel            context.CancelFunc
+	logger            *slog.Logger
 }
 
-func New(uri string, handler func([]byte)) *Connector {
+func New(uri string, handler func([]byte), logger *slog.Logger) *Connector {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Connector{
 		url:               uri,
@@ -29,6 +30,7 @@ func New(uri string, handler func([]byte)) *Connector {
 		messageHandler:    handler,
 		ctx:               ctx,
 		cancel:            cancel,
+		logger:            logger,
 	}
 }
 
@@ -93,28 +95,29 @@ func (c *Connector) makeNewConnection() {
 	// Check if shutdown was requested
 	select {
 	case <-c.ctx.Done():
-		slog.Info("Shutdown requested, not creating new connection")
+		c.logger.Info("Shutdown requested, not creating new connection")
 		return
 	default:
 	}
 
-	slog.Info("Connecting to WebSocket", "url", c.url)
+	c.logger.Info("Connecting to WebSocket", "url", c.url)
 
 	conn, httpInfo, err := websocket.DefaultDialer.Dial(c.url, nil)
 	if err != nil {
-		slog.Warn("Connection error", "error", err)
+		c.logger.Warn("Connection error", "error", err)
 		// Retry immediately in goroutine to avoid infinite recursion
 		go c.makeNewConnection()
 		return
 	}
 
-	slog.Info("Successfully connected to WebSocket", "remote_addr", conn.RemoteAddr().String(), "status", httpInfo.Status)
+	c.logger.Info("Successfully connected to WebSocket", "remote_addr", conn.RemoteAddr().String(), "status", httpInfo.Status)
 
 	newConn := &connection{
 		conn:      conn,
 		closeChan: make(chan struct{}),
 		id:        time.Now().UnixNano(),
 		ctx:       c.ctx,
+		logger:    c.logger,
 	}
 
 	go newConn.runHandler(c.messageHandler)
@@ -128,7 +131,7 @@ func (c *Connector) handleConnection(conn *connection) {
 	conn.conn.SetPongHandler(func(pongMessage string) error {
 		err := conn.conn.SetReadDeadline(time.Now().Add(time.Second * 60))
 		if err != nil {
-			slog.Warn("Pong error", "error", err)
+			c.logger.Warn("Pong error", "error", err)
 		}
 
 		return nil
@@ -140,7 +143,7 @@ func (c *Connector) handleConnection(conn *connection) {
 		for {
 			select {
 			case <-c.ctx.Done():
-				slog.Info("Connection graceful shutdown", "connection_id", conn.id)
+				c.logger.Info("Connection graceful shutdown", "connection_id", conn.id)
 				c.removeConnection(conn)
 				conn.close()
 				return
@@ -148,16 +151,16 @@ func (c *Connector) handleConnection(conn *connection) {
 				// Check if this is graceful shutdown
 				select {
 				case <-c.ctx.Done():
-					slog.Info("Connection graceful shutdown", "connection_id", conn.id)
+					c.logger.Info("Connection graceful shutdown", "connection_id", conn.id)
 					c.removeConnection(conn)
 					conn.close()
 					return
 				default:
-					slog.Warn("Connection unexpected disconnect, reconnecting", "connection_id", conn.id)
+					c.logger.Warn("Connection unexpected disconnect, reconnecting", "connection_id", conn.id)
 					c.removeConnection(conn)
 					err := c.SubscribeStreams(conn.getSubs())
 					if err != nil {
-						slog.Error("Failed to resubscribe streams", "error", err)
+						c.logger.Error("Failed to resubscribe streams", "error", err)
 					}
 					conn.close()
 					return
@@ -165,7 +168,7 @@ func (c *Connector) handleConnection(conn *connection) {
 			case <-ticker.C:
 				err := conn.conn.WriteMessage(websocket.PingMessage, []byte(``))
 				if err != nil {
-					slog.Warn("Error sending ping message", "error", err)
+					c.logger.Warn("Error sending ping message", "error", err)
 				}
 				//log.Info().Msg(`Ping sent`)
 			}

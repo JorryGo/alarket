@@ -18,16 +18,17 @@ type connection struct {
 	subs           []string
 	mux            sync.Mutex
 	ctx            context.Context
+	logger         *slog.Logger
 }
 
 func (c *connection) close() {
 	err := c.conn.Close()
 	if err != nil {
-		slog.Error("Failed to close connection", "error", err)
+		c.logger.Error("Failed to close connection", "error", err)
 		return
 	}
 
-	slog.Info("Connection was successfully closed")
+	c.logger.Info("Connection was successfully closed")
 }
 
 func (c *connection) addSubs(tickers []string) error {
@@ -49,7 +50,7 @@ func (c *connection) addSubs(tickers []string) error {
 	c.mux.Lock()
 	c.subs = append(c.subs, tickers...)
 	c.mux.Unlock()
-	slog.Info("Successfully subscribed to tickers", "tickers", tickers)
+	c.logger.Info("Successfully subscribed to tickers", "tickers", tickers)
 
 	return nil
 }
@@ -69,15 +70,15 @@ func (c *connection) runHandler(handler func([]byte)) {
 			select {
 			case <-c.ctx.Done():
 				// Graceful shutdown, don't log as warning
-				slog.Debug("Connection closed during shutdown")
+				c.logger.Debug("Connection closed during shutdown")
 			default:
 				// Unexpected error
-				slog.Warn("Connection read error", "error", err)
+				c.logger.Warn("Connection read error", "error", err)
 			}
 
 			err = c.conn.Close()
 			if err != nil {
-				slog.Warn("Failed to close connection after read error", "error", err)
+				c.logger.Warn("Failed to close connection after read error", "error", err)
 			}
 
 			c.closeChan <- struct{}{}

@@ -17,12 +17,23 @@ type SymbolTree struct {
 	To          *map[string]*SymbolTree
 }
 
-func GetTickers() ([]*binance.Symbol, error) {
-	binanceClient := binance.NewClient(``, ``)
-	tickerList, err := binanceClient.NewExchangeInfoService().Do(context.Background())
+type TickerService struct {
+	logger *slog.Logger
+	client *binance.Client
+}
+
+func NewTickerService(logger *slog.Logger) *TickerService {
+	return &TickerService{
+		logger: logger,
+		client: binance.NewClient(``, ``),
+	}
+}
+
+func (s *TickerService) GetTickers() ([]*binance.Symbol, error) {
+	tickerList, err := s.client.NewExchangeInfoService().Do(context.Background())
 
 	if err != nil || tickerList == nil {
-		slog.Error("Failed to get exchange info", "error", err)
+		s.logger.Error("Failed to get exchange info", "error", err)
 		return nil, err
 	}
 
@@ -38,8 +49,8 @@ func GetTickers() ([]*binance.Symbol, error) {
 	return res, nil
 }
 
-func GetTickersForMap() (*map[string]*SymbolTree, error) {
-	tickers, err := GetTickers()
+func (s *TickerService) GetTickersForMap() (*map[string]*SymbolTree, error) {
+	tickers, err := s.GetTickers()
 	if err != nil {
 		return nil, err
 	}

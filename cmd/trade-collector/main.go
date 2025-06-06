@@ -17,31 +17,32 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
-	slog.SetDefault(logger)
 
-	slog.Info("Trade Collector has started")
+	logger.Info("Trade Collector has started")
 
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("Failed to load configuration", "error", err)
+		logger.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 
 	binance.UseTestnet = cfg.Binance.UseTestnet
 
-	connInstance := connector.New(`wss://stream.binance.com:443/ws`, internalBinance.Handle)
+	binanceHandler := internalBinance.NewHandler(logger)
+	connInstance := connector.New(`wss://stream.binance.com:443/ws`, binanceHandler.Handle, logger)
 	connInstance.Run()
 
-	tickersToAdd := getTickers()
+	tickerService := processors.NewTickerService(logger)
+	tickersToAdd := getTickers(tickerService)
 
 	err = connInstance.SubscribeStreams(tickersToAdd)
 	if err != nil {
-		slog.Error("Failed to subscribe to streams", "error", err)
+		logger.Error("Failed to subscribe to streams", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("Successfully subscribed to ticker streams", "ticker_count", len(tickersToAdd))
+	logger.Info("Successfully subscribed to ticker streams", "ticker_count", len(tickersToAdd))
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, os.Kill, syscall.SIGTERM)
@@ -49,21 +50,20 @@ func main() {
 
 	go func() {
 		sig := <-sigs
-		slog.Info("Received shutdown signal", "signal", sig.String())
+		logger.Info("Received shutdown signal", "signal", sig.String())
 		connInstance.ClosePool()
 		done <- true
 	}()
 
 	<-done
-	slog.Info("Trade Collector stopped")
+	logger.Info("Trade Collector stopped")
 
 }
 
-func getTickers() []string {
-	tickers, err := processors.GetTickers()
+func getTickers(tickerService *processors.TickerService) []string {
+	tickers, err := tickerService.GetTickers()
 
 	if err != nil {
-		slog.Error("Failed to get tickers", "error", err)
 		os.Exit(1)
 	}
 
