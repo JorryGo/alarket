@@ -35,7 +35,7 @@ func (m *Migrator) Migrate(ctx context.Context) error {
 					buyer_order_id Int64,
 					seller_order_id Int64,
 					trade_time DateTime64(3),
-					is_buyer_maker Bool,
+					is_buyer_market_maker Bool,
 					event_time DateTime64(3),
 					created_at DateTime64(3) DEFAULT now64(3)
 				)

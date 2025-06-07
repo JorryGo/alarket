@@ -38,21 +38,25 @@ func (h *EventHandler) HandleMessage(ctx context.Context, message []byte) error 
 		return err
 	}
 
-	eventType, ok := baseEvent["e"].(string)
-	if !ok {
-		h.logger.Debug("Received non-event message", "message", string(message))
-		return nil
+	// Check if it's a trade event (has "e" field)
+	eventType, hasEventType := baseEvent["e"].(string)
+	if hasEventType {
+		switch eventType {
+		case "trade":
+			return h.handleTradeEvent(ctx, message)
+		default:
+			h.logger.Debug("Unknown event type", "type", eventType)
+			return nil
+		}
 	}
 
-	switch eventType {
-	case "trade":
-		return h.handleTradeEvent(ctx, message)
-	case "bookTicker":
+	// Check if it's a book ticker (has "u" field for updateId)
+	if _, isBookTicker := baseEvent["u"]; isBookTicker {
 		return h.handleBookTickerEvent(ctx, message)
-	default:
-		h.logger.Debug("Unknown event type", "type", eventType)
-		return nil
 	}
+
+	h.logger.Debug("Received non-event message", "message", string(message))
+	return nil
 }
 
 func (h *EventHandler) handleTradeEvent(ctx context.Context, message []byte) error {
@@ -77,10 +81,10 @@ func (h *EventHandler) handleTradeEvent(ctx context.Context, message []byte) err
 		event.Symbol,
 		price,
 		quantity,
-		event.BuyerOrderID,
-		event.SellerOrderID,
+		0, // BuyerOrderID not provided in trade stream
+		0, // SellerOrderID not provided in trade stream
 		time.UnixMilli(event.TradeTime),
-		event.IsBuyerMaker,
+		event.IsBuyerMarketMaker,
 		time.UnixMilli(event.EventTime),
 	)
 
@@ -114,6 +118,8 @@ func (h *EventHandler) handleBookTickerEvent(ctx context.Context, message []byte
 		return fmt.Errorf("invalid ask quantity: %w", err)
 	}
 
+	// Book ticker events don't have timestamps, so we use current time
+	now := time.Now()
 	bookTicker := entities.NewBookTicker(
 		event.UpdateID,
 		event.Symbol,
@@ -121,8 +127,8 @@ func (h *EventHandler) handleBookTickerEvent(ctx context.Context, message []byte
 		bidQuantity,
 		askPrice,
 		askQuantity,
-		time.UnixMilli(event.TransactionTime),
-		time.UnixMilli(event.EventTime),
+		now, // transaction time
+		now, // event time
 	)
 
 	return h.processBookTickerUC.Execute(ctx, bookTicker)

@@ -53,9 +53,9 @@ func Load() (*Config, error) {
 	// App configuration
 	cfg.App.LogLevel = getEnv("LOG_LEVEL", "info")
 	cfg.App.SubscribeTrades = getEnvBool("SUBSCRIBE_TRADES", true)
-	cfg.App.SubscribeBookTickers = getEnvBool("SUBSCRIBE_BOOK_TICKERS", true)
-	cfg.App.BatchSize = getEnvInt("BATCH_SIZE", 1000)
-	cfg.App.BatchFlushTimeoutMs = getEnvInt("BATCH_FLUSH_TIMEOUT_MS", 200)
+	cfg.App.SubscribeBookTickers = getEnvBool("SUBSCRIBE_BOOK_TICKERS", false)
+	cfg.App.BatchSize = getEnvInt("BATCH_SIZE", 10000)
+	cfg.App.BatchFlushTimeoutMs = getEnvInt("BATCH_FLUSH_TIMEOUT_MS", 1000)
 
 	return cfg, nil
 }

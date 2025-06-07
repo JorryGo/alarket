@@ -41,10 +41,10 @@ func (uc *SubscribeToSymbolsUseCase) Execute(ctx context.Context, subscribeTrade
 	uc.logger.Info("Subscribing to symbols", "count", len(symbolNames))
 
 	if subscribeTrades {
-		//if err := uc.exchangeClient.SubscribeToTrades(ctx, symbolNames); err != nil {
-		//	uc.logger.Error("Failed to subscribe to trades", "error", err)
-		//	return err
-		//}
+		if err := uc.exchangeClient.SubscribeToTrades(ctx, symbolNames); err != nil {
+			uc.logger.Error("Failed to subscribe to trades", "error", err)
+			return err
+		}
 	}
 
 	if subscribeBookTickers {

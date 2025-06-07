@@ -92,6 +92,7 @@ func (p *BookTickerBatchProcessor) flushRoutine() {
 			// Flush remaining book tickers on shutdown
 			p.mu.Lock()
 			if len(p.bookTickers) > 0 {
+				p.logger.Info("Graceful shutdown received, flushing remaining book ticker batch", "batchSize", len(p.bookTickers))
 				p.flushBatch()
 			}
 			p.mu.Unlock()

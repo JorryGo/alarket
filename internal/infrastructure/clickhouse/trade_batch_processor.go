@@ -91,6 +91,7 @@ func (p *TradeBatchProcessor) flushRoutine() {
 			// Flush remaining trades on shutdown
 			p.mu.Lock()
 			if len(p.trades) > 0 {
+				p.logger.Info("Graceful shutdown received, flushing remaining trade batch", "batchSize", len(p.trades))
 				p.flushBatch()
 			}
 			p.mu.Unlock()
