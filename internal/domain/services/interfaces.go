@@ -2,6 +2,7 @@ package services
 
 import (
 	"alarket/internal/domain/entities"
+	"context"
 )
 
 type ExchangeClient interface {
@@ -22,5 +23,4 @@ type EventSubscriber interface {
 
 type HistoricalDataService interface {
 	FetchHistoricalTrades(ctx context.Context, symbol string, fromID int64, limit int) ([]*entities.Trade, error)
-	GetLastTradeID(ctx context.Context, symbol string) (int64, error)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 
 	"alarket/internal/domain/entities"
@@ -181,4 +182,46 @@ func (r *TradeRepository) GetOldestTradeTime(ctx context.Context, symbol string)
 	}
 
 	return &oldestTime, nil
+}
+
+func (r *TradeRepository) GetOldestTradeID(ctx context.Context, symbol string) (*int64, error) {
+	// First check if there are any trades for this symbol
+	countQuery := `
+		SELECT COUNT(*) 
+		FROM trades 
+		WHERE symbol = ?
+	`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, countQuery, symbol).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count trades: %w", err)
+	}
+
+	if count == 0 {
+		return nil, nil
+	}
+
+	// If there are trades, get the oldest ID
+	query := `
+		SELECT id
+		FROM trades
+		WHERE symbol = ?
+		ORDER BY trade_time ASC
+		LIMIT 1
+	`
+
+	var oldestIDStr string
+	err = r.db.QueryRowContext(ctx, query, symbol).Scan(&oldestIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get oldest trade ID: %w", err)
+	}
+
+	// Convert string ID to int64
+	oldestID, err := strconv.ParseInt(oldestIDStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse oldest trade ID: %w", err)
+	}
+
+	return &oldestID, nil
 }

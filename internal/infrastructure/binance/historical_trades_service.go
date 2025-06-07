@@ -3,6 +3,7 @@ package binance
 import (
 	"context"
 	"fmt"
+	"github.com/adshao/go-binance/v2"
 	"log/slog"
 	"strconv"
 	"time"
@@ -74,23 +75,4 @@ func (s *HistoricalTradesService) FetchHistoricalTrades(ctx context.Context, sym
 	}
 
 	return trades, nil
-}
-
-func (s *HistoricalTradesService) GetLastTradeID(ctx context.Context, symbol string) (int64, error) {
-	// Get the most recent trades
-	trades, err := s.FetchHistoricalTrades(ctx, symbol, 0, 1)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get last trade: %w", err)
-	}
-
-	if len(trades) == 0 {
-		return 0, fmt.Errorf("no trades found for symbol %s", symbol)
-	}
-
-	lastID, err := strconv.ParseInt(trades[0].ID, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse trade ID: %w", err)
-	}
-
-	return lastID, nil
 }

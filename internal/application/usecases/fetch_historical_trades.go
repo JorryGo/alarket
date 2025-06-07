@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	"alarket/internal/domain/entities"
 	"alarket/internal/domain/repositories"
 	"alarket/internal/domain/services"
 )
@@ -48,9 +47,6 @@ func (uc *FetchHistoricalTradesUseCase) Execute(ctx context.Context, symbol stri
 		return fmt.Errorf("failed to check existing trades: %w", err)
 	}
 
-	var fromID int64 = 0
-	endTime := time.Now()
-
 	if oldestTime != nil {
 		uc.logger.Info("Found existing trades",
 			"oldest_trade_time", oldestTime.Format(time.RFC3339))
@@ -62,13 +58,29 @@ func (uc *FetchHistoricalTradesUseCase) Execute(ctx context.Context, symbol stri
 				"target_time", targetTime.Format(time.RFC3339))
 			return nil
 		}
+	}
 
-		// Set end time to before the oldest trade we have
-		endTime = oldestTime.Add(-time.Millisecond)
+	// Determine starting point for fetching
+	var fromID int64 = 0
+	if oldestTime != nil {
+		// We have existing data, get the oldest ID and go backwards
+		oldestID, err := uc.tradeRepository.GetOldestTradeID(ctx, symbol)
+		if err != nil {
+			return fmt.Errorf("failed to get oldest trade ID: %w", err)
+		}
+		if oldestID != nil {
+			fromID = *oldestID - int64(uc.batchSize)
+			uc.logger.Info("Starting from existing oldest ID",
+				"oldest_id", *oldestID,
+				"starting_from_id", fromID)
+		}
+	} else {
+		uc.logger.Info("No existing trades found, starting from latest available")
 	}
 
 	totalFetched := 0
 	batchCount := 0
+	oldestFetched := time.Now()
 
 	for {
 		// Check context cancellation
@@ -89,68 +101,68 @@ func (uc *FetchHistoricalTradesUseCase) Execute(ctx context.Context, symbol stri
 			break
 		}
 
-		// Filter trades by end time and find oldest
-		var tradesToSave []*entities.Trade
-		oldestInBatch := time.Now()
-
+		// Process all trades in this batch and find oldest
 		for _, trade := range trades {
-			// Skip trades that are newer than our end time
-			if trade.Time.After(endTime) {
-				continue
-			}
-
-			// Update oldest time in this batch
-			if trade.Time.Before(oldestInBatch) {
-				oldestInBatch = trade.Time
-			}
-
-			tradesToSave = append(tradesToSave, trade)
-
-			// Update fromID for next batch
-			tradeID, err := strconv.ParseInt(trade.ID, 10, 64)
-			if err == nil && tradeID > fromID {
-				fromID = tradeID
+			if trade.Time.Before(oldestFetched) {
+				oldestFetched = trade.Time
 			}
 		}
 
-		// Save trades to database
-		if len(tradesToSave) > 0 {
-			if err := uc.tradeRepository.SaveBatch(ctx, tradesToSave); err != nil {
-				return fmt.Errorf("failed to save trades batch: %w", err)
-			}
-
-			totalFetched += len(tradesToSave)
-			batchCount++
-
-			uc.logger.Info("Saved trades batch",
-				"batch", batchCount,
-				"trades_in_batch", len(tradesToSave),
-				"total_fetched", totalFetched,
-				"oldest_in_batch", oldestInBatch.Format(time.RFC3339))
+		// Save all trades to database
+		if err := uc.tradeRepository.SaveBatch(ctx, trades); err != nil {
+			return fmt.Errorf("failed to save trades batch: %w", err)
 		}
 
-		// Check if we've reached our target time
-		if oldestInBatch.Before(targetTime) || oldestInBatch.Equal(targetTime) {
+		totalFetched += len(trades)
+		batchCount++
+
+		uc.logger.Info("Saved trades batch",
+			"batch", batchCount,
+			"trades_in_batch", len(trades),
+			"total_fetched", totalFetched,
+			"oldest_in_batch", oldestFetched.Format(time.RFC3339),
+			"from_id", fromID)
+
+		// Check if we've collected enough historical data
+		if oldestFetched.Before(targetTime) || oldestFetched.Equal(targetTime) {
 			uc.logger.Info("Reached target time",
 				"target_time", targetTime.Format(time.RFC3339),
-				"oldest_fetched", oldestInBatch.Format(time.RFC3339))
+				"oldest_fetched", oldestFetched.Format(time.RFC3339))
 			break
 		}
 
-		// If we got less than limit, we've reached the end
+		// If we got less than limit, we've reached the end of available data
 		if len(trades) < uc.batchSize {
 			uc.logger.Info("Reached end of available trades")
 			break
 		}
 
-		// Rate limiting
+		// Move backwards in ID for next batch
+		if len(trades) > 0 {
+			firstTradeID, err := strconv.ParseInt(trades[0].ID, 10, 64)
+			if err == nil {
+				fromID = firstTradeID - int64(uc.batchSize)
+				uc.logger.Debug("Moving backwards in history",
+					"first_id_in_batch", firstTradeID,
+					"next_from_id", fromID)
+			}
+		}
+
+		// Prevent going into negative IDs
+		if fromID < 0 {
+			uc.logger.Info("Reached beginning of trade history (ID < 0)")
+			break
+		}
+
+		// Rate limiting - Binance allows 1200 requests per minute
 		time.Sleep(uc.rateLimitDelay)
 	}
 
 	uc.logger.Info("Historical trades collection completed",
 		"symbol", symbol,
 		"total_fetched", totalFetched,
-		"batches", batchCount)
+		"batches", batchCount,
+		"oldest_collected", oldestFetched.Format(time.RFC3339))
 
 	return nil
 }
