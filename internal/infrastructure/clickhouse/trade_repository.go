@@ -148,3 +148,37 @@ func (r *TradeRepository) GetByID(ctx context.Context, id string) (*entities.Tra
 
 	return &trade, nil
 }
+
+func (r *TradeRepository) GetOldestTradeTime(ctx context.Context, symbol string) (*time.Time, error) {
+	// First check if there are any trades for this symbol
+	countQuery := `
+		SELECT COUNT(*) 
+		FROM trades 
+		WHERE symbol = ?
+	`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, countQuery, symbol).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count trades: %w", err)
+	}
+
+	if count == 0 {
+		return nil, nil
+	}
+
+	// If there are trades, get the oldest one
+	query := `
+		SELECT MIN(trade_time) as oldest_time
+		FROM trades
+		WHERE symbol = ?
+	`
+
+	var oldestTime time.Time
+	err = r.db.QueryRowContext(ctx, query, symbol).Scan(&oldestTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get oldest trade time: %w", err)
+	}
+
+	return &oldestTime, nil
+}

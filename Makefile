@@ -1,8 +1,15 @@
-.PHONY: build run db-up db-down db-reset db-test logs clean help
+.PHONY: build build-historical run db-up db-down db-reset db-test logs clean help
 
-# Build the application
+# Build the trade collector application
 build:
 	mkdir -p ./build && go build -o ./build/trade-collector cmd/trade-collector/main.go
+
+# Build the historical trades collector
+build-historical:
+	mkdir -p ./build && go build -o ./build/historical-trades cmd/historical-trades/main.go
+
+# Build all binaries
+build-all: build build-historical
 
 # Run the application
 run: build
@@ -49,13 +56,15 @@ start: db-up
 # Show help
 help:
 	@echo "Available commands:"
-	@echo "  build    - Build the application"
-	@echo "  run      - Run the application"
-	@echo "  db-up    - Start ClickHouse database"
-	@echo "  db-down  - Stop ClickHouse database"
-	@echo "  db-reset - Reset database (remove all data)"
-	@echo "  db-test  - Test database connection and show status"
-	@echo "  logs     - Show database logs"
-	@echo "  clean    - Clean build artifacts"
-	@echo "  start    - Start database and application"
-	@echo "  help     - Show this help"
+	@echo "  build              - Build the trade collector application"
+	@echo "  build-historical   - Build the historical trades collector"
+	@echo "  build-all          - Build all binaries"
+	@echo "  run                - Run the trade collector application"
+	@echo "  db-up              - Start ClickHouse database"
+	@echo "  db-down            - Stop ClickHouse database"
+	@echo "  db-reset           - Reset database (remove all data)"
+	@echo "  db-test            - Test database connection and show status"
+	@echo "  logs               - Show database logs"
+	@echo "  clean              - Clean build artifacts"
+	@echo "  start              - Start database and application"
+	@echo "  help               - Show this help"
