@@ -57,6 +57,23 @@ View database logs:
 make logs
 ```
 
+Test database connection:
+```bash
+make db-test
+```
+
+## Other Commands
+
+Clean build artifacts:
+```bash
+make clean
+```
+
+Show all available commands:
+```bash
+make help
+```
+
 ## Project Architecture
 
 This is a Go-based cryptocurrency trading data collector that follows Clean Architecture principles. It streams real-time trade data from Binance WebSocket API and stores it in ClickHouse database.
@@ -95,11 +112,12 @@ This is a Go-based cryptocurrency trading data collector that follows Clean Arch
 
 ### Key Features
 
-- **Connection Pool Management**: Automatically creates new connections when stream limits are reached
+- **Connection Pool Management**: Automatically creates new connections when stream limits are reached (max 1022 streams per connection)
 - **Automatic Reconnection**: Handles connection failures with graceful reconnection and stream resubscription
 - **Rate Limiting**: Respects Binance API limits (max 100 subscriptions per request)
-- **Batch Processing**: Collects data in batches and flushes to ClickHouse every 200ms or when batch is full for optimal database performance
-- **Graceful Shutdown**: Handles SIGTERM/SIGINT for clean application shutdown with final batch flush
+- **Batch Processing**: Collects data in batches and flushes to ClickHouse every 1 second or when batch is full for optimal database performance
+- **Graceful Shutdown**: Handles SIGTERM/SIGINT for clean application shutdown with final batch flush (10-second timeout)
+- **Health Monitoring**: WebSocket connections use ping/pong mechanism (30-second intervals) for connection health
 
 ### Environment Variables
 
@@ -115,9 +133,9 @@ Optional:
 - `CLICKHOUSE_DEBUG`: Enable debug logging (default: false)
 - `LOG_LEVEL`: Application log level - debug, info, warn, error (default: info)
 - `SUBSCRIBE_TRADES`: Enable trade event subscription (default: true)
-- `SUBSCRIBE_BOOK_TICKERS`: Enable book ticker subscription (default: true)
-- `BATCH_SIZE`: Number of records to batch before flushing to ClickHouse (default: 1000)
-- `BATCH_FLUSH_TIMEOUT_MS`: Maximum time in milliseconds to wait before flushing batch (default: 200)
+- `SUBSCRIBE_BOOK_TICKERS`: Enable book ticker subscription (default: false)
+- `BATCH_SIZE`: Number of records to batch before flushing to ClickHouse (default: 10000)
+- `BATCH_FLUSH_TIMEOUT_MS`: Maximum time in milliseconds to wait before flushing batch (default: 1000)
 
 ### Data Processing
 
@@ -136,3 +154,11 @@ The architecture ensures:
 - **Maintainability**: Clear separation of concerns
 - **Scalability**: Automatic connection management for high throughput
 - **Reliability**: Graceful error handling and recovery
+
+### Technical Details
+
+- **ClickHouse**: Version 23.8, exposes ports 9000 (native) and 8123 (HTTP)
+- **Go Version**: Requires Go 1.23.0+ with toolchain 1.24.2
+- **Connection Timeouts**: 45-second handshake, 10-second write deadline
+- **Batch Processing**: Uses goroutines for asynchronous database writes with data copying to avoid blocking
+- **Project Structure**: Compiled binaries are placed in `./build/` directory
