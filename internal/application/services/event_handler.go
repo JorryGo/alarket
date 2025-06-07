@@ -43,6 +43,9 @@ func (h *EventHandler) HandleMessage(ctx context.Context, message []byte) error 
 	if hasEventType {
 		switch eventType {
 		case "trade":
+			if baseEvent["m"] == false {
+				fmt.Println(baseEvent)
+			}
 			return h.handleTradeEvent(ctx, message)
 		default:
 			h.logger.Debug("Unknown event type", "type", eventType)
