@@ -7,14 +7,13 @@ toolchain go1.24.2
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.34.0
 	github.com/adshao/go-binance/v2 v2.8.2
-	github.com/bitly/go-simplejson v0.5.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/joho/godotenv v1.5.1
 )
 
 require (
 	github.com/ClickHouse/ch-go v0.65.1 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect
+	github.com/bitly/go-simplejson v0.5.1 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

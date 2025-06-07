@@ -1,76 +1,63 @@
 package main
 
 import (
-	internalBinance "alarket/internal/binance"
-	"alarket/internal/binance/processors"
-	"alarket/internal/config"
-	"alarket/internal/connector"
+	"context"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/adshao/go-binance/v2"
+	"alarket/internal/infrastructure/container"
 )
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	logger.Info("Trade Collector has started")
-
-	// Load configuration
-	cfg, err := config.Load()
+	// Create dependency injection container
+	c, err := container.New(ctx)
 	if err != nil {
-		logger.Error("Failed to load configuration", "error", err)
+		slog.Error("Failed to initialize container", "error", err)
 		os.Exit(1)
 	}
-
-	binance.UseTestnet = cfg.Binance.UseTestnet
-
-	binanceHandler := internalBinance.NewHandler(logger)
-	connInstance := connector.New(`wss://stream.binance.com:443/ws`, binanceHandler.Handle, logger)
-	connInstance.Run()
-
-	tickerService := processors.NewTickerService(logger)
-	tickersToAdd := getTickers(tickerService)
-
-	err = connInstance.SubscribeStreams(tickersToAdd)
-	if err != nil {
-		logger.Error("Failed to subscribe to streams", "error", err)
-		os.Exit(1)
-	}
-
-	logger.Info("Successfully subscribed to ticker streams", "ticker_count", len(tickersToAdd))
-
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, os.Kill, syscall.SIGTERM)
-	done := make(chan bool, 1)
-
-	go func() {
-		sig := <-sigs
-		logger.Info("Received shutdown signal", "signal", sig.String())
-		connInstance.ClosePool()
-		done <- true
+	logger := c.Logger
+	
+	defer func() {
+		if err := c.Close(); err != nil {
+			logger.Error("Failed to close container", "error", err)
+		}
 	}()
+	logger.Info("Trade Collector started",
+		"testnet", c.Config.Binance.UseTestnet,
+		"subscribeTrades", c.Config.App.SubscribeTrades,
+		"subscribeBookTickers", c.Config.App.SubscribeBookTickers,
+	)
 
-	<-done
-	logger.Info("Trade Collector stopped")
-
-}
-
-func getTickers(tickerService *processors.TickerService) []string {
-	tickers, err := tickerService.GetTickers()
-
-	if err != nil {
+	// Subscribe to symbols
+	if err := c.SubscribeToSymbolsUseCase.Execute(
+		ctx,
+		c.Config.App.SubscribeTrades,
+		c.Config.App.SubscribeBookTickers,
+	); err != nil {
+		logger.Error("Failed to subscribe to symbols", "error", err)
 		os.Exit(1)
 	}
 
-	var result []string
-	for _, ticker := range tickers {
-		result = append(result, ticker.Symbol)
+	// Setup graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Wait for shutdown signal
+	<-sigChan
+	logger.Info("Shutdown signal received")
+
+	// Cancel context to stop all operations
+	cancel()
+
+	// Close container resources
+	if err := c.Close(); err != nil {
+		logger.Error("Error during shutdown", "error", err)
 	}
 
-	return result
+	logger.Info("Trade Collector stopped")
 }
