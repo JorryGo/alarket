@@ -81,8 +81,6 @@ func (h *EventHandler) handleTradeEvent(ctx context.Context, message []byte) err
 		event.Symbol,
 		price,
 		quantity,
-		0, // BuyerOrderID not provided in trade stream
-		0, // SellerOrderID not provided in trade stream
 		time.UnixMilli(event.TradeTime),
 		event.IsBuyerMarketMaker,
 		time.UnixMilli(event.EventTime),

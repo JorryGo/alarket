@@ -5,15 +5,13 @@ import (
 )
 
 type Trade struct {
-	ID            string
-	Symbol        string
-	Price         float64
-	Quantity      float64
-	BuyerOrderID  int64
-	SellerOrderID int64
-	Time          time.Time
-	IsBuyerMaker  bool
-	EventTime     time.Time
+	ID           string
+	Symbol       string
+	Price        float64
+	Quantity     float64
+	Time         time.Time
+	IsBuyerMaker bool
+	EventTime    time.Time
 }
 
 func NewTrade(
@@ -21,22 +19,18 @@ func NewTrade(
 	symbol string,
 	price float64,
 	quantity float64,
-	buyerOrderID int64,
-	sellerOrderID int64,
 	tradeTime time.Time,
 	isBuyerMaker bool,
 	eventTime time.Time,
 ) *Trade {
 	return &Trade{
-		ID:            id,
-		Symbol:        symbol,
-		Price:         price,
-		Quantity:      quantity,
-		BuyerOrderID:  buyerOrderID,
-		SellerOrderID: sellerOrderID,
-		Time:          tradeTime,
-		IsBuyerMaker:  isBuyerMaker,
-		EventTime:     eventTime,
+		ID:           id,
+		Symbol:       symbol,
+		Price:        price,
+		Quantity:     quantity,
+		Time:         tradeTime,
+		IsBuyerMaker: isBuyerMaker,
+		EventTime:    eventTime,
 	}
 }
 

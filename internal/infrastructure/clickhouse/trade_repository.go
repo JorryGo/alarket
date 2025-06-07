@@ -21,9 +21,8 @@ func NewTradeRepository(db *sql.DB) repositories.TradeRepository {
 func (r *TradeRepository) Save(ctx context.Context, trade *entities.Trade) error {
 	query := `
 		INSERT INTO trades (
-			id, symbol, price, quantity, buyer_order_id, seller_order_id,
-			trade_time, is_buyer_market_maker, event_time
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			id, symbol, price, quantity, trade_time, is_buyer_market_maker, event_time
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
@@ -31,8 +30,6 @@ func (r *TradeRepository) Save(ctx context.Context, trade *entities.Trade) error
 		trade.Symbol,
 		trade.Price,
 		trade.Quantity,
-		trade.BuyerOrderID,
-		trade.SellerOrderID,
 		trade.Time,
 		trade.IsBuyerMaker,
 		trade.EventTime,
@@ -58,8 +55,7 @@ func (r *TradeRepository) SaveBatch(ctx context.Context, trades []*entities.Trad
 
 	batch, err := tx.Prepare(`
 		INSERT INTO trades (
-			id, symbol, price, quantity, buyer_order_id, seller_order_id,
-			trade_time, is_buyer_market_maker, event_time
+			id, symbol, price, quantity, trade_time, is_buyer_market_maker, event_time
 		)
 	`)
 	if err != nil {
@@ -73,8 +69,6 @@ func (r *TradeRepository) SaveBatch(ctx context.Context, trades []*entities.Trad
 			trade.Symbol,
 			trade.Price,
 			trade.Quantity,
-			trade.BuyerOrderID,
-			trade.SellerOrderID,
 			trade.Time,
 			trade.IsBuyerMaker,
 			trade.EventTime,
@@ -93,8 +87,7 @@ func (r *TradeRepository) SaveBatch(ctx context.Context, trades []*entities.Trad
 
 func (r *TradeRepository) GetBySymbol(ctx context.Context, symbol string, from, to time.Time) ([]*entities.Trade, error) {
 	query := `
-		SELECT id, symbol, price, quantity, buyer_order_id, seller_order_id,
-			   trade_time, is_buyer_market_maker, event_time
+		SELECT id, symbol, price, quantity, trade_time, is_buyer_market_maker, event_time
 		FROM trades
 		WHERE symbol = ? AND trade_time >= ? AND trade_time <= ?
 		ORDER BY trade_time
@@ -114,8 +107,6 @@ func (r *TradeRepository) GetBySymbol(ctx context.Context, symbol string, from, 
 			&trade.Symbol,
 			&trade.Price,
 			&trade.Quantity,
-			&trade.BuyerOrderID,
-			&trade.SellerOrderID,
 			&trade.Time,
 			&trade.IsBuyerMaker,
 			&trade.EventTime,
@@ -131,8 +122,7 @@ func (r *TradeRepository) GetBySymbol(ctx context.Context, symbol string, from, 
 
 func (r *TradeRepository) GetByID(ctx context.Context, id string) (*entities.Trade, error) {
 	query := `
-		SELECT id, symbol, price, quantity, buyer_order_id, seller_order_id,
-			   trade_time, is_buyer_market_maker, event_time
+		SELECT id, symbol, price, quantity, trade_time, is_buyer_market_maker, event_time
 		FROM trades
 		WHERE id = ?
 		LIMIT 1
@@ -144,8 +134,6 @@ func (r *TradeRepository) GetByID(ctx context.Context, id string) (*entities.Tra
 		&trade.Symbol,
 		&trade.Price,
 		&trade.Quantity,
-		&trade.BuyerOrderID,
-		&trade.SellerOrderID,
 		&trade.Time,
 		&trade.IsBuyerMaker,
 		&trade.EventTime,
