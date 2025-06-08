@@ -225,3 +225,45 @@ func (r *TradeRepository) GetOldestTradeID(ctx context.Context, symbol string) (
 
 	return &oldestID, nil
 }
+
+func (r *TradeRepository) GetNewestTradeID(ctx context.Context, symbol string) (*int64, error) {
+	// First check if there are any trades for this symbol
+	countQuery := `
+		SELECT COUNT(*) 
+		FROM trades 
+		WHERE symbol = ?
+	`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, countQuery, symbol).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count trades: %w", err)
+	}
+
+	if count == 0 {
+		return nil, nil
+	}
+
+	// If there are trades, get the newest ID
+	query := `
+		SELECT id
+		FROM trades
+		WHERE symbol = ?
+		ORDER BY trade_time DESC
+		LIMIT 1
+	`
+
+	var newestIDStr string
+	err = r.db.QueryRowContext(ctx, query, symbol).Scan(&newestIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get newest trade ID: %w", err)
+	}
+
+	// Convert string ID to int64
+	newestID, err := strconv.ParseInt(newestIDStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse newest trade ID: %w", err)
+	}
+
+	return &newestID, nil
+}

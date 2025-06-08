@@ -14,4 +14,5 @@ type TradeRepository interface {
 	GetByID(ctx context.Context, id string) (*entities.Trade, error)
 	GetOldestTradeTime(ctx context.Context, symbol string) (*time.Time, error)
 	GetOldestTradeID(ctx context.Context, symbol string) (*int64, error)
+	GetNewestTradeID(ctx context.Context, symbol string) (*int64, error)
 }

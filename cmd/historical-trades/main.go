@@ -20,8 +20,9 @@ import (
 )
 
 var (
-	symbol string
-	days   int
+	symbol  string
+	days    int
+	forward bool
 )
 
 var rootCmd = &cobra.Command{
@@ -35,6 +36,7 @@ It checks existing data in the database and only fetches older trades as needed.
 func init() {
 	rootCmd.Flags().StringVarP(&symbol, "symbol", "s", "", "Trading pair symbol (e.g., BTCUSDT)")
 	rootCmd.Flags().IntVarP(&days, "days", "d", 7, "Number of days of historical data to fetch")
+	rootCmd.Flags().BoolVarP(&forward, "forward", "f", false, "Fetch trades forward from newest ID (fill gaps)")
 
 	rootCmd.MarkFlagRequired("symbol")
 }
@@ -103,10 +105,11 @@ func runHistoricalTrades(cmd *cobra.Command, args []string) error {
 
 	logger.Info("Starting historical trades collection",
 		"symbol", symbol,
-		"days", days)
+		"days", days,
+		"forward", forward)
 
 	// Execute use case
-	if err := fetchHistoricalTradesUseCase.Execute(ctx, symbol, days); err != nil {
+	if err := fetchHistoricalTradesUseCase.Execute(ctx, symbol, days, forward); err != nil {
 		logger.Error("Failed to fetch historical trades", "error", err)
 		return err
 	}
