@@ -1,4 +1,4 @@
-.PHONY: build build-historical run db-up db-down db-reset db-test logs clean help
+.PHONY: build build-historical build-file-import run db-up db-down db-reset db-test logs clean help
 
 # Build the trade collector application
 build:
@@ -8,8 +8,12 @@ build:
 build-historical:
 	mkdir -p ./build && go build -o ./build/historical-trades cmd/historical-trades/main.go
 
+# Build the file import tool
+build-file-import:
+	mkdir -p ./build && go build -o ./build/file-import cmd/file-import/main.go
+
 # Build all binaries
-build-all: build build-historical
+build-all: build build-historical build-file-import
 
 # Run the application
 run: build
@@ -58,6 +62,7 @@ help:
 	@echo "Available commands:"
 	@echo "  build              - Build the trade collector application"
 	@echo "  build-historical   - Build the historical trades collector"
+	@echo "  build-file-import  - Build the file import tool"
 	@echo "  build-all          - Build all binaries"
 	@echo "  run                - Run the trade collector application"
 	@echo "  db-up              - Start ClickHouse database"
