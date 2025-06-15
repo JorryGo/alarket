@@ -126,7 +126,7 @@ func importCSVFile(ctx context.Context, filePath, symbol string, repository *cli
 	reader := csv.NewReader(file)
 	reader.FieldsPerRecord = 7 // Expect 7 fields per record
 
-	const batchSize = 10000
+	const batchSize = 100000
 	var trades []*entities.Trade
 	var totalProcessed int64
 	var bytesRead int64

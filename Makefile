@@ -21,6 +21,7 @@ run: build
 
 # Start ClickHouse database
 db-up:
+	mkdir -p ./build/volumes/clickhouse
 	docker-compose up -d clickhouse
 	@echo "Waiting for ClickHouse to be ready..."
 	@until docker-compose exec clickhouse clickhouse-client --query "SELECT 1" > /dev/null 2>&1; do \
@@ -35,7 +36,9 @@ db-down:
 
 # Reset database (remove all data)
 db-reset:
-	docker-compose down -v
+	docker-compose down
+	rm -rf ./build/volumes/clickhouse
+	mkdir -p ./build/volumes/clickhouse
 	docker-compose up -d clickhouse
 	@echo "Database reset complete"
 
