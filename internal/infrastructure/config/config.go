@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -32,6 +33,7 @@ type AppConfig struct {
 	SubscribeBookTickers bool
 	BatchSize            int
 	BatchFlushTimeoutMs  int
+	Symbols              []string // Specific symbols to collect (empty = all USDT pairs)
 }
 
 func Load() (*Config, error) {
@@ -56,6 +58,7 @@ func Load() (*Config, error) {
 	cfg.App.SubscribeBookTickers = getEnvBool("SUBSCRIBE_BOOK_TICKERS", false)
 	cfg.App.BatchSize = getEnvInt("BATCH_SIZE", 10000)
 	cfg.App.BatchFlushTimeoutMs = getEnvInt("BATCH_FLUSH_TIMEOUT_MS", 1000)
+	cfg.App.Symbols = getEnvSlice("SYMBOLS", []string{})
 
 	return cfg, nil
 }
@@ -80,6 +83,23 @@ func getEnvBool(key string, defaultValue bool) bool {
 	if value := os.Getenv(key); value != "" {
 		if boolValue, err := strconv.ParseBool(value); err == nil {
 			return boolValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvSlice(key string, defaultValue []string) []string {
+	if value := os.Getenv(key); value != "" {
+		// Split by comma and trim spaces
+		parts := strings.Split(value, ",")
+		result := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				result = append(result, trimmed)
+			}
+		}
+		if len(result) > 0 {
+			return result
 		}
 	}
 	return defaultValue

@@ -42,8 +42,12 @@ func init() {
 	rootCmd.Flags().StringVarP(&filePath, "file", "f", "", "Path to CSV file to import")
 	rootCmd.Flags().StringVarP(&symbol, "symbol", "s", "", "Trading pair symbol (e.g., ETHUSDT)")
 
-	rootCmd.MarkFlagRequired("file")
-	rootCmd.MarkFlagRequired("symbol")
+	if err := rootCmd.MarkFlagRequired("file"); err != nil {
+		panic(fmt.Sprintf("failed to mark flag as required: %v", err))
+	}
+	if err := rootCmd.MarkFlagRequired("symbol"); err != nil {
+		panic(fmt.Sprintf("failed to mark flag as required: %v", err))
+	}
 }
 
 func runFileImport(cmd *cobra.Command, args []string) error {
@@ -51,7 +55,6 @@ func runFileImport(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -59,13 +62,11 @@ func runFileImport(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Setup logger
 	logLevel := slog.LevelInfo
 	switch cfg.App.LogLevel {
 	case "debug":
@@ -80,24 +81,24 @@ func runFileImport(cmd *cobra.Command, args []string) error {
 		Level: logLevel,
 	}))
 
-	// Setup database
 	db, err := setupDatabase(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			logger.Error("Failed to close database", "error", err)
+		}
+	}()
 
-	// Create repository
 	tradeRepository := clickhouse.NewTradeRepository(db)
 
-	// Normalize symbol
 	symbol = strings.ToUpper(symbol)
 
 	logger.Info("Starting CSV import",
 		"file", filePath,
 		"symbol", symbol)
 
-	// Import CSV file
 	if err := importCSVFile(ctx, filePath, symbol, tradeRepository.(*clickhouse.TradeRepository), logger); err != nil {
 		logger.Error("Failed to import CSV file", "error", err)
 		return err
@@ -108,23 +109,24 @@ func runFileImport(cmd *cobra.Command, args []string) error {
 }
 
 func importCSVFile(ctx context.Context, filePath, symbol string, repository *clickhouse.TradeRepository, logger *slog.Logger) error {
-	// Open file
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			logger.Error("Failed to close file", "error", err)
+		}
+	}()
 
-	// Get file size for progress tracking
 	fileInfo, err := file.Stat()
 	if err != nil {
 		return fmt.Errorf("failed to get file info: %w", err)
 	}
 	fileSize := fileInfo.Size()
 
-	// Create CSV reader
 	reader := csv.NewReader(file)
-	reader.FieldsPerRecord = 7 // Expect 7 fields per record
+	reader.FieldsPerRecord = 7
 
 	const batchSize = 100000
 	var trades []*entities.Trade
@@ -135,7 +137,6 @@ func importCSVFile(ctx context.Context, filePath, symbol string, repository *cli
 	logger.Info("Starting CSV processing", "file_size_mb", fileSize/(1024*1024))
 
 	for {
-		// Check context cancellation
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -160,12 +161,10 @@ func importCSVFile(ctx context.Context, filePath, symbol string, repository *cli
 		trades = append(trades, trade)
 		totalProcessed++
 
-		// Update bytes read (approximate)
 		for _, field := range record {
 			bytesRead += int64(len(field) + 1) // +1 for delimiter
 		}
 
-		// Save batch when full
 		if len(trades) >= batchSize {
 			if err := repository.SaveBatch(ctx, trades); err != nil {
 				return fmt.Errorf("failed to save batch: %w", err)
@@ -272,14 +271,18 @@ func setupDatabase(ctx context.Context, cfg *config.Config, logger *slog.Logger)
 	}
 
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			logger.Error("Failed to close database after ping error", "error", closeErr)
+		}
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	// Run migrations
 	migrator := clickhouse.NewMigrator(db, logger)
 	if err := migrator.Migrate(ctx); err != nil {
-		db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			logger.Error("Failed to close database after migration error", "error", closeErr)
+		}
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 

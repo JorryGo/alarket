@@ -38,7 +38,9 @@ func init() {
 	rootCmd.Flags().IntVarP(&days, "days", "d", 7, "Number of days of historical data to fetch")
 	rootCmd.Flags().BoolVarP(&forward, "forward", "f", false, "Fetch trades forward from newest ID (fill gaps)")
 
-	rootCmd.MarkFlagRequired("symbol")
+	if err := rootCmd.MarkFlagRequired("symbol"); err != nil {
+		panic(fmt.Sprintf("failed to mark flag as required: %v", err))
+	}
 }
 
 func runHistoricalTrades(cmd *cobra.Command, args []string) error {
@@ -80,7 +82,11 @@ func runHistoricalTrades(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			logger.Error("Failed to close database", "error", err)
+		}
+	}()
 
 	// Create repositories
 	tradeRepository := clickhouse.NewTradeRepository(db)
@@ -134,14 +140,18 @@ func setupDatabase(ctx context.Context, cfg *config.Config, logger *slog.Logger)
 	}
 
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			logger.Error("Failed to close database after ping error", "error", closeErr)
+		}
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	// Run migrations
 	migrator := clickhouse.NewMigrator(db, logger)
 	if err := migrator.Migrate(ctx); err != nil {
-		db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			logger.Error("Failed to close database after migration error", "error", closeErr)
+		}
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 

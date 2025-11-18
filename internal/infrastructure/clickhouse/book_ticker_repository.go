@@ -53,7 +53,7 @@ func (r *BookTickerRepository) SaveBatch(ctx context.Context, tickers []*entitie
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	batch, err := tx.Prepare(`
 		INSERT INTO book_tickers (
@@ -64,7 +64,7 @@ func (r *BookTickerRepository) SaveBatch(ctx context.Context, tickers []*entitie
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
 	}
-	defer batch.Close()
+	defer func() { _ = batch.Close() }()
 
 	for _, ticker := range tickers {
 		_, err := batch.Exec(
@@ -134,7 +134,7 @@ func (r *BookTickerRepository) GetBySymbol(ctx context.Context, symbol string, f
 	if err != nil {
 		return nil, fmt.Errorf("failed to query book tickers: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tickers []*entities.BookTicker
 	for rows.Next() {

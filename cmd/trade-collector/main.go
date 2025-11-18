@@ -1,42 +1,18 @@
 package main
 
 import (
+	"alarket/internal/infrastructure/container"
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
-	"time"
-
-	"alarket/internal/infrastructure/container"
 )
 
 func main() {
-
-	wg := sync.WaitGroup{}
-	for i := range []int{1, 2, 3, 4, 5, 6, 7} {
-		fmt.Println(i)
-		wg.Add(1)
-		go func() {
-			for {
-				h := time.Now().Unix() - 3
-				if h == 1 {
-					fmt.Println("1")
-					wg.Done()
-					break
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create dependency injection container
 	c, err := container.New(ctx)
 	if err != nil {
 		slog.Error("Failed to initialize container", "error", err)

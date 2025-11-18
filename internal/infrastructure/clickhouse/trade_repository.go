@@ -52,7 +52,7 @@ func (r *TradeRepository) SaveBatch(ctx context.Context, trades []*entities.Trad
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	batch, err := tx.Prepare(`
 		INSERT INTO trades (
@@ -62,7 +62,7 @@ func (r *TradeRepository) SaveBatch(ctx context.Context, trades []*entities.Trad
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
 	}
-	defer batch.Close()
+	defer func() { _ = batch.Close() }()
 
 	for _, trade := range trades {
 		_, err := batch.Exec(
@@ -98,7 +98,7 @@ func (r *TradeRepository) GetBySymbol(ctx context.Context, symbol string, from, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to query trades: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var trades []*entities.Trade
 	for rows.Next() {

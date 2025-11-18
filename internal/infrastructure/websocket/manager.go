@@ -118,7 +118,7 @@ func (m *Manager) CloseAll() error {
 
 func (c *Connection) readLoop(ctx context.Context) {
 	defer func() {
-		c.close()
+		_ = c.close()
 		c.logger.Info("Read loop terminated", "id", c.id)
 	}()
 
@@ -157,10 +157,10 @@ func (c *Connection) pingLoop(ctx context.Context) {
 			}
 			err := c.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second))
 			c.mu.Unlock()
-			
+
 			if err != nil {
 				c.logger.Error("Ping failed", "id", c.id, "error", err)
-				c.close()
+				_ = c.close()
 				return
 			}
 		}
@@ -175,7 +175,9 @@ func (c *Connection) send(message []byte) error {
 		return fmt.Errorf("connection %s is closed", c.id)
 	}
 
-	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return fmt.Errorf("failed to set write deadline: %w", err)
+	}
 	return c.conn.WriteMessage(websocket.TextMessage, message)
 }
 

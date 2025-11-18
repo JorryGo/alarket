@@ -10,14 +10,25 @@ import (
 )
 
 type SymbolRepository struct {
-	db      *sql.DB
-	symbols []*entities.Symbol // In-memory cache for now
+	db             *sql.DB
+	symbols        []*entities.Symbol // In-memory cache for now
+	allowedSymbols map[string]bool    // Filter symbols (nil = all symbols)
 }
 
-func NewSymbolRepository(db *sql.DB, symbols []*entities.Symbol) repositories.SymbolRepository {
+func NewSymbolRepository(db *sql.DB, symbols []*entities.Symbol, allowedSymbols []string) repositories.SymbolRepository {
+	// Create a map for fast lookup if symbols are specified
+	var allowedMap map[string]bool
+	if len(allowedSymbols) > 0 {
+		allowedMap = make(map[string]bool, len(allowedSymbols))
+		for _, symbol := range allowedSymbols {
+			allowedMap[symbol] = true
+		}
+	}
+
 	return &SymbolRepository{
-		db:      db,
-		symbols: symbols,
+		db:             db,
+		symbols:        symbols,
+		allowedSymbols: allowedMap,
 	}
 }
 
@@ -30,7 +41,17 @@ func (r *SymbolRepository) GetAll(ctx context.Context) ([]*entities.Symbol, erro
 func (r *SymbolRepository) GetActiveUsdt(ctx context.Context) ([]*entities.Symbol, error) {
 	active := make([]*entities.Symbol, 0)
 	for _, symbol := range r.symbols {
-		if symbol.IsActive() && (symbol.BaseAsset == "USDT" || symbol.QuoteAsset == "USDT") {
+		if !symbol.IsActive() {
+			continue
+		}
+
+		// If allowedSymbols is set, filter by the list
+		if r.allowedSymbols != nil {
+			if r.allowedSymbols[symbol.Name] {
+				active = append(active, symbol)
+			}
+		} else {
+			// If allowedSymbols is nil (SYMBOLS not configured), return all active symbols
 			active = append(active, symbol)
 		}
 	}
