@@ -533,16 +533,6 @@ If you encounter any issues or have questions:
 2. Search [existing issues](https://github.com/JorryGo/alarket/issues)
 3. Create a [new issue](https://github.com/JorryGo/alarket/issues/new) with detailed information
 
-## Roadmap
-
-- [ ] Support for additional exchanges (Coinbase, Kraken, etc.)
-- [ ] Real-time analytics dashboard
-- [ ] Advanced data aggregation and indicators
-- [ ] Alerting system for price movements
-- [ ] REST API for data access
-- [ ] Time-series data compression
-- [ ] Multi-instance deployment support
-
 ---
 
 **Disclaimer**: This software is for educational and research purposes. Cryptocurrency trading involves risk. Always do your own research and use this software responsibly.
